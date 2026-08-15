@@ -1,0 +1,19 @@
+[Unit]
+Description=EduFlow Homework Management System
+After=network.target
+
+[Service]
+Type=simple
+User=eduflow
+Group=eduflow
+WorkingDirectory=/opt/eduflow/app
+EnvironmentFile=/opt/eduflow/app/.env
+Environment=SERVER_SUBMISSION_ROOT=/opt/eduflow/data/server-files
+ExecStart=/opt/eduflow/app/venv/bin/gunicorn --workers 4 --bind 127.0.0.1:8000 --access-logfile - --error-logfile - app:app
+Restart=always
+RestartSec=3
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

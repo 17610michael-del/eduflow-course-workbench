@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}学情分析{% endblock %}
+{% block content %}
+<div class="page analytics-page">
+  <div class="page-header"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>{{ '学情分析' if current_user.role in ['teacher','assistant'] else '我的学情' }}</h1><p>结合任务互动与提交记录，由 DeepSeek 生成学习参与情况报告。</p></div><span class="mock-badge"><i></i> DEEPSEEK API</span></div>
+  <div class="analytics-grid">
+    <section class="panel analytics-control">
+      <div class="panel-heading"><div><h2>{{ '选择分析对象' if current_user.role in ['teacher','assistant'] else '我的账号' }}</h2></div></div>
+      <div class="control-body">
+        <label>学生账号</label><div class="student-select-wrap"><select id="analytics-student" {% if current_user.role == 'student' %}disabled{% endif %}>{% for student in students %}<option value="{{ student.username }}" data-name="{{ student.display_name }}" data-username="{{ student.username }}">{{ student.display_name }} · @{{ student.username }}</option>{% endfor %}</select></div>
+        <div class="selected-profile" id="selected-profile"><span class="avatar avatar-student">{{ students[0].display_name[0] if students else '?' }}</span><div><strong>{{ students[0].display_name if students else '暂无学生' }}</strong><span>@{{ students[0].username if students else '' }} · Linux 账号</span></div></div>
+        <div class="data-sources"><p>本次分析将使用</p><div><span>✓</span> 任务提交记录</div><div><span>✓</span> 师生互动内容</div><div><span>✓</span> 任务完成比例</div></div>
+        <button class="btn btn-primary btn-block" id="analyze-button" {% if not students %}disabled{% endif %}><span>✦</span> 开始分析</button>
+        <small class="privacy-note">分析仅使用讨论与提交记录，不包含服务器密码。</small>
+      </div>
+    </section>
+
+    <section class="analytics-result" id="analytics-result">
+      <div class="analysis-placeholder"><div class="analysis-illustration"><span>⌁</span><i></i><i></i><i></i></div><h2>等待生成分析</h2><p>从左侧选择一名学生，然后点击“开始分析”。</p></div>
+      <div class="analysis-loading" hidden><div class="spinner"></div><h2>正在汇总学习数据...</h2><p>分析背景、互动和任务提交情况</p></div>
+      <div class="analysis-report" hidden>
+        <header class="report-header"><div><span class="avatar avatar-lg avatar-student" id="report-avatar"></span><div><p>个体学情报告</p><h2 id="report-name"></h2><span id="report-id"></span></div></div><span class="generated-time" id="generated-time"></span></header>
+        <div class="report-score-row"><div class="score-ring" id="score-ring"><div><strong id="score-value">0%</strong><span>综合掌握度</span></div></div><div class="score-summary"><span class="trend-badge">↗ 稳步提升</span><h3 id="score-heading"></h3><p>该结果基于当前已收集数据生成，建议结合课堂表现综合判断。</p></div></div>
+        <div class="report-cards"><article><span class="report-icon purple">◫</span><div><small>互动参与度</small><strong id="engagement"></strong><p id="question-count"></p></div></article><article><span class="report-icon green">✓</span><div><small>作业完成情况</small><strong id="submission-ratio"></strong><p>已提交任务比例</p></div></article></div>
+        <section class="weak-section"><div class="section-title"><span>⚑</span><div><h3>需要关注的知识点</h3><p>建议在后续教学中重点巩固</p></div></div><div id="weak-topics" class="topic-list"></div></section>
+        <section class="suggestion-section"><div class="section-title"><span>✦</span><div><h3>个性化教学建议</h3><p id="suggestion"></p></div></div></section>
+        <details class="json-details"><summary>查看 API 原始 JSON <span>⌄</span></summary><pre id="json-output"></pre></details>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

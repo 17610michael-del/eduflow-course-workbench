@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}考试{% endblock %}
+{% block content %}
+<div class="page wide-page">
+  <div class="page-header"><div><p class="eyebrow">EXAM CENTER</p><h1>考试</h1><p>随堂测试、期中考试与期末考试统一管理。</p></div></div>
+  <section class="exam-overview panel"><div class="exam-overview-icon">▤</div><div><span>{{ '考试管理' if current_user.role in ['teacher','assistant'] else '我的考试' }}</span><strong>{{ total_count }} 项考试</strong><small>{{ '已结束' if current_user.role in ['teacher','assistant'] else '已交卷' }} {{ completed_count }} 项</small></div><div class="exam-overview-progress"><strong>{{ completion_percent }}%</strong><span><i style="width:{{ completion_percent }}%"></i></span><small>完成比例</small></div></section>
+  {% if current_user.role == 'teacher' %}
+  {% set category = request.form.get('category', exam_draft.data.category if exam_draft else 'quiz') %}
+  {% set mode = request.form.get('mode', exam_draft.data.mode if exam_draft else 'paper') %}
+  {% set bank_selected = request.form.getlist('bank_question_ids') if request.method == 'POST' else (exam_draft.data.bank_question_ids if exam_draft and exam_draft.data.bank_question_ids else []) %}
+  <form class="panel exam-create-form" method="post" enctype="multipart/form-data" data-draft-form data-draft-type="exam_new" data-draft-key="new" data-exam-builder>
+    <div class="panel-heading"><div><h2>发布考试</h2></div></div>
+    <div class="draft-status" data-draft-status>{% if exam_draft %}已恢复 {{ exam_draft.updated_at|relative_time }}保存的草稿{% else %}所有设置将实时保存{% endif %}</div>
+    <div class="exam-form-grid">
+      <label>考试名称<input name="title" required value="{{ request.form.get('title', exam_draft.data.title if exam_draft else '') }}" placeholder="例如：数据结构期中考试"></label>
+      <label>考试类型<select name="category"><option value="quiz" {% if category == 'quiz' %}selected{% endif %}>随堂测试</option><option value="midterm" {% if category == 'midterm' %}selected{% endif %}>期中考试</option><option value="final" {% if category == 'final' %}selected{% endif %}>期末考试</option></select></label>
+      <label>考试方式<select name="mode" data-exam-mode><option value="paper" {% if mode == 'paper' %}selected{% endif %}>Word/PDF 试卷</option><option value="computer" {% if mode == 'computer' %}selected{% endif %}>网页机考</option></select></label>
+      <label>开始时间<input type="datetime-local" name="start_at" required value="{{ request.form.get('start_at', exam_draft.data.start_at if exam_draft else '') }}"></label>
+      <label>结束时间<input type="datetime-local" name="end_at" required value="{{ request.form.get('end_at', exam_draft.data.end_at if exam_draft else '') }}"></label>
+      <label>个人考试时长（分钟）<input type="number" name="duration_minutes" min="1" max="1440" required value="{{ request.form.get('duration_minutes', exam_draft.data.duration_minutes if exam_draft else 60) }}"><small>学生开始答题后倒计时，到时自动交卷</small></label>
+      <label class="full" data-paper-settings {% if mode != 'paper' %}hidden{% endif %}>上传 Word/PDF 试卷<input type="file" name="paper" data-draft-file accept=".pdf,.doc,.docx,.zip,.png,.jpg,.jpeg"><small>{% if exam_draft and exam_draft.file_name %}草稿文件：{{ exam_draft.file_name }}{% else %}学生下载后完成，再上传答卷{% endif %}</small></label>
+      <label class="full">考试说明<textarea name="instructions" rows="2" placeholder="考试规则、允许资料等">{{ request.form.get('instructions', exam_draft.data.instructions if exam_draft else '') }}</textarea></label>
+      <section class="question-builder full" data-question-builder {% if mode != 'computer' %}hidden{% endif %}>
+        <div class="question-builder-head"><div><strong>网页机考题库</strong><small>支持单选、多选、判断、填空和简答</small></div><button class="btn btn-secondary btn-sm" type="button" data-add-question>＋ 添加题目</button></div>
+        <div class="bank-picker"><div><strong>从课程题库选题</strong><a href="{{ url_for('question_bank_page') }}">批量导入 / API 生成 →</a></div><div class="bank-picker-list">{% for bank in question_bank %}<label><input type="checkbox" name="bank_question_ids" value="{{ bank.id }}" {% if bank.id|string in bank_selected %}checked{% endif %}><span><strong>{{ bank.prompt }}</strong><small>{{ {'single':'单选','multiple':'多选','true_false':'判断','fill':'填空','essay':'简答'}[bank.question_type] }} · {{ bank.points }} 分</small></span></label>{% else %}<span class="muted">题库暂无题目，可先批量导入或调用生成 API。</span>{% endfor %}</div></div>
+        <input type="hidden" name="question_data" data-question-data value='{{ request.form.get("question_data", exam_draft.data.question_data if exam_draft else "[]")|e }}'>
+        <div class="question-editor-list" data-question-list></div>
+      </section>
+      <input type="hidden" name="questions" value="">
+      <div class="exam-form-actions"><button class="btn btn-secondary" type="button" data-save-draft>保存草稿</button><button class="btn btn-primary" type="submit">发布考试</button></div>
+    </div>
+  </form>
+  {% endif %}
+  <div class="exam-list">
+    {% for exam in exams %}
+    <article class="panel exam-card {{ exam.phase }}" id="exam-{{ exam.id }}">
+      <header><div><span class="exam-type {{ exam.category }}">{{ {'quiz':'随堂测试','midterm':'期中考试','final':'期末考试'}[exam.category] }}</span><h2>{{ exam.title }}</h2><p>{{ '网页机考' if exam.mode == 'computer' else 'Word/PDF 试卷' }} · {{ exam.creator_name }}</p></div><span class="exam-phase">{{ {'upcoming':'未开始','active':'进行中','ended':'已结束'}[exam.phase] }}</span></header>
+      <div class="exam-time"><span>开始 {{ exam.start_at|date_cn }}</span><span>结束 {{ exam.end_at|date_cn }}</span><span>时长 {{ exam.duration_minutes }} 分钟</span>{% if current_user.role in ['teacher','assistant'] %}<strong>{{ exam.submitted_count }} 人已交</strong>{% endif %}</div>
+      {% if exam.instructions %}<p class="exam-instructions">{{ exam.instructions }}</p>{% endif %}
+      {% if exam.paper_url %}<a class="attachment-chip" href="{{ url_for('uploaded_file', filename=exam.paper_url) }}">下载试卷</a>{% endif %}
+      {% if current_user.role in ['teacher','assistant'] and exam.mode == 'computer' %}<div class="exam-question-summary">共 {{ exam.question_count }} 题 · 学生进入考试后开始个人倒计时</div>{% endif %}
+      {% if current_user.role in ['teacher','assistant'] %}<div class="exam-review-link"><a class="btn btn-secondary" href="{{ url_for('exam_submissions_page', exam_id=exam.id) }}">查看答卷与评分 <span>{{ exam.submitted_count }}</span></a></div>{% endif %}
+      {% if current_user.role == 'student' and exam.phase == 'active' and not exam.submission %}
+        {% if exam.mode == 'computer' %}<a class="btn btn-primary" href="{{ url_for('take_exam', exam_id=exam.id) }}">进入机考</a>
+        {% else %}<form class="exam-answer" method="post" action="{{ url_for('submit_exam', exam_id=exam.id) }}" enctype="multipart/form-data" data-draft-form data-draft-type="exam_answer" data-draft-key="{{ exam.id }}" data-confirm-submit><label class="file-drop small"><input type="file" name="answer_file" data-draft-file><span class="upload-icon">⇧</span><span><strong>{{ exam.draft.file_name if exam.draft and exam.draft.file_name else '选择答卷文件' }}</strong><small>{{ '草稿文件已保存' if exam.draft and exam.draft.file_name else '上传完成后的答卷' }}</small></span></label><div class="exam-answer-actions"><span class="draft-status" data-draft-status>{% if exam.draft %}草稿保存于 {{ exam.draft.updated_at|relative_time }}{% else %}答卷可保存为草稿{% endif %}</span><button class="btn btn-secondary" type="button" data-save-draft>保存草稿</button><button class="btn btn-primary" type="submit">提交答卷</button></div></form>{% endif %}
+      {% elif current_user.role == 'student' and exam.submission %}<div class="exam-submitted">✓ 已于 {{ exam.submission.submitted_at|relative_time }}提交{% if exam.grade %}<span class="exam-result score-{{ 'high' if exam.grade.score >= 90 else 'mid' if exam.grade.score >= 60 else 'low' }}"><strong>{{ exam.grade.score }}</strong>/100 · {{ exam.grade.feedback or '老师已评分' }}</span>{% else %}<span>等待老师评分</span>{% endif %}</div>{% endif %}
+    </article>
+    {% else %}<div class="empty-state large"><strong>暂无考试</strong><span>考试发布后会显示在这里。</span></div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

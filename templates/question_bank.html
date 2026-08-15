@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}题库{% endblock %}
+{% block content %}
+<div class="page wide-page">
+  <div class="page-header"><div><p class="eyebrow">QUESTION BANK</p><h1>课程题库</h1><p>批量导入 PDF/DOCX，由 DeepSeek 自动结构化后用于网页机考组卷。</p></div><a class="btn btn-primary" href="{{ url_for('exams_page') }}">去发布考试</a></div>
+  <div class="question-bank-tools">
+    <form class="panel bank-tool-card" method="post" enctype="multipart/form-data">
+      <div class="panel-heading"><div><h2>批量上传题库</h2></div></div>
+      <p>上传后提取文档文字，调用 DeepSeek 自动识别题干、选项、答案和分值。</p>
+      <label class="file-drop small"><input type="file" name="source_file" accept=".pdf,.docx" required><span class="upload-icon">⇧</span><span><strong>选择 PDF 或 DOCX</strong><small>单文件最大 20MB；扫描版 PDF 需先 OCR</small></span></label>
+      <button class="btn btn-primary" type="submit">上传并自动识别</button>
+    </form>
+    <form class="panel bank-tool-card" data-question-generate>
+      <div class="panel-heading"><div><h2>API 生成题目</h2></div></div>
+      <p>调用 DeepSeek 生成结构化题目、选项和参考答案，并直接写入课程题库。</p>
+      <label>主题<input name="topic" required placeholder="例如：Python 列表与字典"></label>
+      <div class="bank-generate-row"><label>题型<select name="type"><option value="single">单选题</option><option value="multiple">多选题</option><option value="true_false">判断题</option><option value="fill">填空题</option><option value="essay">简答题</option></select></label><label>数量<input type="number" name="count" min="1" max="20" value="5"></label></div>
+      <div class="draft-status" data-generate-status>DeepSeek 生成结果将进入题库，教师可校订后组卷</div>
+      <button class="btn btn-primary" type="submit">使用 DeepSeek 生成题目</button>
+    </form>
+  </div>
+
+  {% if imports %}<section class="panel bank-imports"><div class="panel-heading"><div><h2>识别任务</h2></div><span>{{ imports|length }} 项</span></div>{% for item in imports %}<div class="bank-import-row"><span class="exam-type {{ 'quiz' if item.status == 'pending' else 'final' }}">{{ '识别中' if item.status == 'pending' else '失败' }}</span><div><strong>{{ item.prompt }}</strong><small>任务 ID {{ item.id }} · {{ item.created_at|relative_time }}</small></div><code>POST /api/question-bank/imports/{{ item.id }}/complete</code></div>{% endfor %}</section>{% endif %}
+
+  <section class="panel bank-list-panel">
+    <div class="panel-heading"><div><h2>已入库题目</h2></div><span>{{ questions|length }} 题</span></div>
+    <div class="bank-question-list">{% for question in questions %}<article class="bank-question"><span class="bank-question-type">{{ {'single':'单选','multiple':'多选','true_false':'判断','fill':'填空','essay':'简答'}[question.question_type] }}</span><div><strong>{{ question.prompt }}</strong><p>{% for option in question.options_list %}<span>{{ option }}</span>{% endfor %}</p><small>{{ question.points }} 分 · {{ {'upload':'上传待识别','api_recognized':'文件接口识别','deepseek_recognized':'DeepSeek 文件识别','api_generated':'DeepSeek 生成'}[question.source] if question.source in ['upload','api_recognized','deepseek_recognized','api_generated'] else question.source }} · {{ question.created_at|relative_time }}</small></div><form method="post" action="{{ url_for('delete_question_bank_item', question_id=question.id) }}" onsubmit="return confirm('确定从题库删除这道题吗？')"><button class="text-button danger" type="submit">删除</button></form></article>{% else %}<div class="empty-state large"><strong>题库还没有题目</strong><span>上传文件自动识别，或使用 DeepSeek 生成一批题目。</span></div>{% endfor %}</div>
+  </section>
+</div>
+{% endblock %}

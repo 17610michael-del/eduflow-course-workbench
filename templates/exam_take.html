@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ exam.title }} · 机考{% endblock %}
+{% block content %}
+<div class="page exam-take-page" data-exam-take data-exam-id="{{ exam.id }}" data-deadline="{{ deadline_ms }}">
+  <header class="exam-take-header panel"><div><p class="eyebrow">COMPUTER-BASED EXAM</p><h1>{{ exam.title }}</h1><p>{{ questions|length }} 道题 · {{ exam.duration_minutes }} 分钟 · 开始于 {{ attempt.started_at|date_cn }}</p></div><div class="exam-countdown"><span>剩余时间</span><strong data-countdown>--:--</strong><small data-answer-status>答案自动保存</small></div></header>
+  <form class="exam-paper-form" method="post" action="{{ url_for('submit_exam', exam_id=exam.id) }}" data-exam-answer-form>
+    {% for question in questions %}<article class="panel exam-question"><header><span>第 {{ loop.index }} 题</span><em>{{ {'single':'单选题','multiple':'多选题','true_false':'判断题','fill':'填空题','essay':'简答题'}[question.type] }} · {{ question.points }} 分</em></header><h2>{{ question.prompt }}</h2>
+      {% if question.type == 'single' %}<div class="answer-options">{% for option in question.options %}<label><input type="radio" name="answer_{{ question.id }}" value="{{ option }}" {% if saved_answers.get(question.id) == option %}checked{% endif %}><span>{{ option }}</span></label>{% endfor %}</div>
+      {% elif question.type == 'multiple' %}<div class="answer-options">{% for option in question.options %}<label><input type="checkbox" name="answer_{{ question.id }}" value="{{ option }}" {% if option in saved_answers.get(question.id, []) %}checked{% endif %}><span>{{ option }}</span></label>{% endfor %}</div>
+      {% elif question.type == 'true_false' %}<div class="answer-options inline"><label><input type="radio" name="answer_{{ question.id }}" value="正确" {% if saved_answers.get(question.id) == '正确' %}checked{% endif %}><span>正确</span></label><label><input type="radio" name="answer_{{ question.id }}" value="错误" {% if saved_answers.get(question.id) == '错误' %}checked{% endif %}><span>错误</span></label></div>
+      {% elif question.type == 'fill' %}<input class="answer-text-input" name="answer_{{ question.id }}" value="{{ saved_answers.get(question.id, '') }}" placeholder="输入答案">
+      {% else %}<textarea class="answer-textarea" name="answer_{{ question.id }}" rows="6" placeholder="输入答案">{{ saved_answers.get(question.id, '') }}</textarea>{% endif %}
+    </article>{% endfor %}
+    <div class="exam-submit-bar panel"><span>系统会实时保存答案，倒计时结束后自动交卷。</span><button class="btn btn-primary" type="submit" data-manual-submit>确认交卷</button></div>
+  </form>
+</div>
+{% endblock %}

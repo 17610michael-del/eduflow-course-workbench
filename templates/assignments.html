@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}任务列表{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="page-header">
+    <div><p class="eyebrow">WORK ITEMS</p><h1>{{ view_name }}</h1><p>查看、搜索并跟进相关课程任务。</p></div>
+    {% if current_user.role == 'teacher' %}<a class="btn btn-primary" href="{{ url_for('assignment_new') }}">＋ 创建任务</a>{% endif %}
+  </div>
+  <section class="panel list-panel">
+    <div class="completion-overview"><div><strong>{{ completion_percent }}%</strong><span>{% if current_user.role in ['teacher','assistant'] %}已关闭任务比例{% else %}已提交任务比例{% endif %}</span></div><div class="completion-track"><i style="width: {{ completion_percent }}%"></i></div><small>{{ completed_count }} / {{ total_count }} 项已完成</small></div>
+    <form class="list-toolbar" method="get">
+      <input type="hidden" name="view" value="{{ view }}">
+      <label class="search-field"><span>⌕</span><input name="q" value="{{ keyword }}" placeholder="搜索任务标题或正文..." aria-label="搜索任务"><button type="submit">搜索</button></label>
+      <select name="sort" onchange="this.form.submit()" aria-label="任务排序">
+        <option value="newest" {% if sort == 'newest' %}selected{% endif %}>最近创建</option>
+        <option value="due" {% if sort == 'due' %}selected{% endif %}>截止时间</option>
+      </select>
+    </form>
+    <div class="list-tabs assignment-view-tabs"><a class="{{ 'active' if view == 'all' else '' }}" href="{{ url_for('assignments_page', view='all') }}">全部任务 <b>{{ total_count }}</b></a><a class="{{ 'active' if view == 'completed' else '' }}" href="{{ url_for('assignments_page', view='completed') }}">已完成任务 <b>{{ completed_count }}</b></a>{% if view not in ['all','completed'] %}<span class="active">{{ view_name }} <b>{{ assignments|length }}</b></span>{% endif %}</div>
+    <div class="assignment-list">
+      {% for item in assignments %}
+      <article class="assignment-row">
+        <div class="status-icon {{ item.status }}">{{ '○' if item.status == 'open' else '✓' }}</div>
+        <div class="assignment-main">
+          <div class="assignment-title-line"><a href="{{ url_for('assignment_detail', assignment_id=item.id) }}">{{ item.title }}</a>{% for label in item.labels_list %}<span class="label">{{ label }}</span>{% endfor %}</div>
+          <p>#{{ item.id }} · {{ item.status|capitalize }} · 由 {{ item.creator_name }} 创建于 {{ item.created_at|relative_time }}</p>
+          <div class="assignment-meta"><span>◷ 截止 {{ item.due_date|date_cn }}</span><span>✓ {{ item.submitted_count }}/{{ item.assignee_count }} 已提交</span></div>
+        </div>
+        <a class="comment-count" href="{{ url_for('assignment_detail', assignment_id=item.id) }}#activity" aria-label="{{ item.comment_count }} 条评论">▱ {{ item.comment_count }}</a>
+      </article>
+      {% else %}<div class="empty-state large"><strong>这里暂时没有任务</strong><span>可以返回全部任务，或尝试更换搜索词。</span><a class="btn btn-secondary btn-sm" href="{{ url_for('assignments_page') }}">查看全部任务</a></div>{% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

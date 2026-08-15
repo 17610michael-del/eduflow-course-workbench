@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}用户设置{% endblock %}
+{% block content %}
+<div class="page narrow-page">
+  <div class="page-header"><div><p class="eyebrow">ACCOUNT SETTINGS</p><h1>用户设置</h1><p>维护用于课程页面展示的真实姓名。</p></div></div>
+  <div class="settings-grid">
+    <section class="panel profile-summary"><span class="avatar avatar-lg avatar-{{ current_user.role }}">{{ profile.display_name[0] }}</span><h2>{{ profile.display_name }}</h2><p>@{{ profile.username }}</p><span class="role-pill">{{ '老师' if profile.role == 'teacher' else '学生' }}</span>{% if profile.group_name %}<div class="profile-group"><small>所在小组</small><strong>{{ profile.group_name }}{% if profile.is_group_leader %} · 组长{% endif %}</strong></div>{% endif %}</section>
+    <form class="panel form-panel profile-form" method="post">
+      <h2>基本资料</h2><p>学生信息、学情分析和小组页面均使用这里填写的真实姓名。</p>
+      <div class="form-group"><label for="display-name">真实姓名 <em>*</em></label><input id="display-name" name="display_name" required minlength="2" maxlength="50" value="{{ profile.display_name }}" placeholder="请输入真实姓名"><small>Linux 用户名 @{{ profile.username }} 不会改变。</small></div>
+      <div class="form-actions"><button class="btn btn-primary" type="submit">保存真实姓名</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}
