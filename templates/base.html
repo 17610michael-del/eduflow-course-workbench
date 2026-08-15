@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="师生作业互动与学情分析系统">
+  <title>{% block title %}作业管理系统{% endblock %} · EduFlow</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('home') }}" aria-label="返回首页">
+      <span class="brand-mark">E</span>
+      <span class="brand-name">EduFlow</span>
+    </a>
+    <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="展开导航">☰</button>
+    <form class="global-search" action="{{ url_for('assignments_page') }}" method="get">
+      <span aria-hidden="true">⌕</span>
+      <input name="q" aria-label="全局搜索" placeholder="Search or go to..." value="{{ request.args.get('q', '') }}">
+      <kbd>/</kbd>
+    </form>
+    <div class="top-actions">
+      {% if current_user.role == 'teacher' %}<a class="icon-button" href="{{ url_for('assignment_new') }}" title="新建任务" aria-label="新建任务">＋</a>{% endif %}
+      <a class="icon-button notification" href="{{ url_for('home') }}#attention" title="通知" aria-label="通知">♢<span></span></a>
+      <details class="user-menu">
+        <summary>
+          <span class="avatar avatar-{{ current_user.role }}">{{ current_user.name[0] }}</span>
+          <span class="user-copy"><strong>{{ current_user.name }}</strong><small>@{{ current_user.username }} · {{ '老师' if current_user.role == 'teacher' else ('助教' if current_user.role == 'assistant' else '学生') }}</small></span>
+          <span aria-hidden="true">⌄</span>
+        </summary>
+        <div class="user-popover">
+          <div class="signed-user"><span class="avatar avatar-{{ current_user.role }}">{{ current_user.name[0] }}</span><span><strong>{{ current_user.name }}</strong><small>@{{ current_user.username }}</small></span></div>
+          <a class="user-menu-link" href="{{ url_for('user_settings') }}"><span>⚙</span> 用户设置</a>
+          <form action="{{ url_for('logout') }}" method="post"><button class="logout-button" type="submit">退出登录 <span>↪</span></button></form>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="workspace-label">YOUR WORKSPACE</div>
+    <nav>
+      <a href="{{ url_for('home') }}" class="{% if request.endpoint == 'home' %}active{% endif %}"><span>⌂</span> Home</a>
+      <a href="{{ url_for('assignments_page') }}" class="{% if request.endpoint in ['assignments_page', 'assignment_detail', 'assignment_new'] %}active{% endif %}"><span>▣</span> 所有任务 <em>{{ nav_assignment_count }}</em></a>
+      {% if current_user.role == 'teacher' %}<a href="{{ url_for('assignment_drafts_page') }}" class="{% if request.endpoint == 'assignment_drafts_page' %}active{% endif %}"><span>▧</span> 任务草稿箱 <em>{{ nav_draft_count }}</em></a>{% endif %}
+      <a href="{{ url_for('students_page') }}" class="{% if request.endpoint == 'students_page' %}active{% endif %}"><span>♙</span> 学生信息</a>
+      <a href="{{ url_for('analytics_page') }}" class="{% if request.endpoint == 'analytics_page' %}active{% endif %}"><span>⌁</span> 学情分析</a>
+      <a href="{{ url_for('exams_page') }}" class="{% if request.endpoint in ['exams_page','submit_exam','exam_submissions_page'] %}active{% endif %}"><span>▤</span> 考试 <em>{{ nav_exam_count }}</em></a>
+      {% if current_user.role == 'teacher' %}<a href="{{ url_for('question_bank_page') }}" class="{% if request.endpoint == 'question_bank_page' %}active{% endif %}"><span>▦</span> 题库</a>{% endif %}
+      <a href="{{ url_for('groups_page') }}" class="{% if request.endpoint == 'groups_page' %}active{% endif %}"><span>♟</span> 学习小组</a>
+      <a href="{{ url_for('audit_log_page') }}" class="{% if request.endpoint == 'audit_log_page' %}active{% endif %}"><span>≡</span> 提交与删除记录</a>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="course-badge">CS</div>
+      <div><strong>课程工作台</strong><small>193 内网服务器</small></div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-stack" aria-live="polite">
+        {% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}<button type="button" aria-label="关闭">×</button></div>{% endfor %}
+      </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

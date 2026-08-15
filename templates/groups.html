@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}学习小组{% endblock %}
+{% block content %}
+<div class="page wide-page">
+  <div class="page-header"><div><p class="eyebrow">STUDY GROUPS</p><h1>学习小组</h1><p>{{ '创建小组、分配成员并指定组长。' if current_user.role == 'teacher' else '查看自己所在的小组、组长和成员。' }}</p></div></div>
+  {% if current_user.role == 'teacher' %}
+  <form class="panel group-create-form" method="post">
+    <div class="panel-heading"><div><h2>创建新小组</h2></div></div>
+    <div class="group-form-body"><label>小组名称<input name="name" required placeholder="例如：第一学习小组"></label><label>指定组长<select name="leader_id" required><option value="">请选择</option>{% for student in students if not student.group_id %}<option value="{{ student.id }}">{{ student.display_name }} · @{{ student.username }}</option>{% endfor %}</select></label><fieldset><legend>选择成员</legend><div class="group-member-picker">{% for student in students if not student.group_id %}<label><input type="checkbox" name="member_ids" value="{{ student.id }}"><span class="avatar avatar-sm avatar-student">{{ student.display_name[0] }}</span><span><strong>{{ student.display_name }}</strong><small>@{{ student.username }}</small></span></label>{% else %}<span class="muted">暂无未分组学生</span>{% endfor %}</div></fieldset><button class="btn btn-primary" type="submit">创建并分组</button></div>
+  </form>
+  {% endif %}
+  <div class="group-workspaces">
+    {% for group in groups %}<article class="panel group-workspace" id="group-{{ group.id }}">
+      <header class="group-workspace-head"><div><span class="group-icon">{{ loop.index }}</span><div><p class="eyebrow">STUDY GROUP</p><h2>{{ group.name }}</h2><span>{{ group.member_count }} 名成员 · 组长 {{ group.leader_name }}</span></div></div><span class="group-online-pill">● 小组空间</span></header>
+      <div class="group-workspace-body">
+        <aside class="group-roster"><div class="group-roster-head"><strong>小组成员</strong><span>{{ group.member_count }}</span></div><div class="group-roster-list">{% for member in group.members %}<div class="group-roster-member {% if current_user.id == member.id %}is-me{% endif %}"><span class="avatar avatar-student">{{ member.display_name[0] }}</span><span><strong>{{ member.display_name }}{% if member.is_leader %}<em class="leader-badge">组长</em>{% endif %}</strong><small>@{{ member.username }}{% if current_user.id == member.id %} · 我{% endif %}</small></span></div>{% endfor %}</div><div class="group-privacy-note">🔒 交流内容仅本组成员与老师可见</div></aside>
+        <section class="group-conversation"><div class="group-chat-head"><div><strong>小组讨论</strong><small>分享进展、问题和学习资料</small></div><span>{{ group.messages|length }} 条消息</span></div><div class="group-chat-messages">{% for message in group.messages %}<div class="group-chat-message {% if message.user_id == current_user.id %}mine{% endif %}"><span class="avatar avatar-sm avatar-{{ message.role }}">{{ message.user_name[0] }}</span><div><header><strong>{{ message.user_name }}</strong><small>{{ message.created_at|relative_time }}</small></header><p>{{ message.content }}</p></div></div>{% else %}<div class="group-chat-empty"><span>✦</span><strong>开始小组讨论</strong><p>可以交流任务分工、学习进度或考试复习问题。</p></div>{% endfor %}</div><form class="group-chat-form" method="post" action="{{ url_for('add_group_message', group_id=group.id) }}"><textarea name="content" rows="3" maxlength="2000" required placeholder="输入消息，和组员一起讨论…"></textarea><div><small>最多 2000 字</small><button class="btn btn-primary" type="submit">发送消息 →</button></div></form></section>
+      </div>
+    </article>{% else %}<div class="empty-state large"><strong>{{ '尚未创建学习小组' if current_user.role == 'teacher' else '你还没有加入学习小组' }}</strong><span>{{ '从上方选择组长和成员创建。' if current_user.role == 'teacher' else '请等待老师分组。' }}</span></div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

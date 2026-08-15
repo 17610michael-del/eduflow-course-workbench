@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ exam.title }} · 答卷审阅{% endblock %}
+{% block content %}
+<div class="page wide-page exam-review-page">
+  <div class="page-header"><div><p class="eyebrow">EXAM REVIEW</p><h1>{{ exam.title }}</h1><p>{{ '网页机考' if exam.mode == 'computer' else '文件答卷' }} · 共收到 {{ submissions|length }} 份答卷</p></div><a class="btn btn-secondary" href="{{ url_for('exams_page') }}#exam-{{ exam.id }}">返回考试列表</a></div>
+  <div class="review-jump panel"><strong>答卷目录</strong><nav>{% for submission in submissions %}<a href="#student-{{ submission.student_id }}"><span class="avatar avatar-sm avatar-student">{{ submission.student_name[0] }}</span>{{ submission.student_name }}{% if submission.score is not none %}<em>{{ submission.score }} 分</em>{% else %}<em>待评分</em>{% endif %}</a>{% else %}<span class="muted">还没有学生交卷。</span>{% endfor %}</nav></div>
+  <div class="exam-submission-review-list">
+    {% for submission in submissions %}<article class="panel exam-submission-review" id="student-{{ submission.student_id }}">
+      <header><div class="student-cell"><span class="avatar avatar-student">{{ submission.student_name[0] }}</span><span><strong>{{ submission.student_name }}</strong><small>@{{ submission.username }} · {{ submission.submitted_at|date_cn }}交卷</small></span></div>{% if submission.score is not none %}<span class="review-score score-{{ 'high' if submission.score >= 90 else 'mid' if submission.score >= 60 else 'low' }}"><strong>{{ submission.score }}</strong><small>/100</small></span>{% else %}<span class="exam-phase">待评分</span>{% endif %}</header>
+      <div class="review-body">
+        <section class="review-answers">
+          {% if exam.mode == 'computer' %}{% for answer in submission.answers %}<article class="review-answer"><header><span>第 {{ loop.index }} 题 · {{ {'single':'单选','multiple':'多选','true_false':'判断','fill':'填空','essay':'简答'}[answer.question.type] }}</span><em>{{ answer.question.points }} 分</em></header><h3>{{ answer.question.prompt }}</h3><div class="student-answer"><span>学生回答</span><strong>{% if answer.answer is sequence and answer.answer is not string %}{{ answer.answer|join('、') }}{% else %}{{ answer.answer or '未作答' }}{% endif %}</strong></div>{% if answer.question.answer %}<div class="reference-answer"><span>参考答案</span><strong>{{ answer.question.answer }}</strong></div>{% endif %}</article>{% endfor %}
+          {% else %}<div class="file-answer-panel"><span class="upload-icon">▤</span><div><strong>{{ submission.student_name }} 的答卷文件</strong><small>点击下载或在浏览器中打开后审阅</small></div>{% if submission.file_url %}<a class="btn btn-primary" href="{{ url_for('uploaded_file', filename=submission.file_url) }}">下载答卷</a>{% endif %}</div>{% endif %}
+        </section>
+        <aside class="review-grading"><form method="post" action="{{ url_for('grade_exam_submission', exam_id=exam.id, student_id=submission.student_id) }}"><label>考试成绩（满分 100）<input type="number" name="score" min="0" max="100" required value="{{ submission.score if submission.score is not none else '' }}" placeholder="0-100"></label><label>教师评语<textarea name="feedback" rows="6" placeholder="写下答题表现和改进建议…">{{ submission.feedback or '' }}</textarea></label><button class="btn btn-primary" type="submit">{{ '更新评分' if submission.score is not none else '保存评分' }}</button>{% if submission.graded_at %}<small>上次评分：{{ submission.graded_at|date_cn }}</small>{% endif %}</form></aside>
+      </div>
+    </article>{% else %}<div class="empty-state large"><strong>暂时没有答卷</strong><span>学生交卷后会按姓名出现在这里。</span></div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}工作台{% endblock %}
+{% block content %}
+<div class="page page-home">
+  <div class="welcome-row">
+    <div>
+      <p class="eyebrow">2026 秋季学期</p>
+      <h1>你好，{{ current_user.name }} <span>👋</span></h1>
+      <p>这里是今天的课程任务与互动概览。</p>
+    </div>
+    {% if current_user.role == 'teacher' %}<a class="btn btn-primary" href="{{ url_for('assignment_new') }}"><span>＋</span> 创建新任务</a>{% endif %}
+  </div>
+
+  <section class="stats-grid" aria-label="数据概览">
+    {% if current_user.role == 'teacher' %}
+    <a class="stat-card accent-orange" href="{{ url_for('assignments_page', view='review') }}">
+      <div class="stat-icon">✓</div><div><span>待我审阅</span><strong>{{ stats.review }}</strong><small>项待评分任务</small></div>
+    </a>
+    <a class="stat-card accent-purple" href="{{ url_for('assignments_page', view='assigned') }}">
+      <div class="stat-icon">▣</div><div><span>指派给我</span><strong>{{ stats.assigned }}</strong><small>项指派任务</small></div>
+    </a>
+    <a class="stat-card accent-blue" href="{{ url_for('assignments_page', view='published') }}">
+      <div class="stat-icon">↗</div><div><span>我发布的</span><strong>{{ stats.published }}</strong><small>项开放任务</small></div>
+    </a>
+    {% elif current_user.role == 'assistant' %}
+    <a class="stat-card accent-orange" href="{{ url_for('assignments_page', view='review') }}">
+      <div class="stat-icon">✓</div><div><span>待我审阅</span><strong>{{ stats.review }}</strong><small>项待评分任务</small></div>
+    </a>
+    <a class="stat-card accent-purple" href="{{ url_for('assignments_page', view='assigned') }}">
+      <div class="stat-icon">▣</div><div><span>指派给我</span><strong>{{ stats.assigned }}</strong><small>项指派任务</small></div>
+    </a>
+    <a class="stat-card accent-blue" href="{{ url_for('assignments_page', view='review') }}">
+      <div class="stat-icon">↗</div><div><span>我的评分</span><strong>{{ stats.graded }}</strong><small>份已评分答卷</small></div>
+    </a>
+    {% else %}
+    <a class="stat-card accent-orange" href="{{ url_for('assignments_page', view='submitted') }}">
+      <div class="stat-icon">✓</div><div><span>我的提交</span><strong>{{ stats.submitted }}</strong><small>项已提交作业</small></div>
+    </a>
+    <a class="stat-card accent-purple" href="{{ url_for('assignments_page', view='assigned') }}">
+      <div class="stat-icon">▣</div><div><span>指派给我</span><strong>{{ stats.assigned }}</strong><small>项课程任务</small></div>
+    </a>
+    <a class="stat-card accent-blue" href="{{ url_for('assignments_page', view='interactions') }}">
+      <div class="stat-icon">↗</div><div><span>我的互动</span><strong>{{ stats.interactions }}</strong><small>条评论与提问</small></div>
+    </a>
+    {% endif %}
+    <a class="stat-card accent-red exam-stat-card" href="{{ url_for('exams_page') }}">
+      <div class="stat-icon">▤</div><div><span>{{ '考试管理' if current_user.role in ['teacher','assistant'] else '我的考试' }}</span><strong>{{ stats.exam_total }}</strong><small>{{ '已结束' if current_user.role in ['teacher','assistant'] else '已交卷' }} {{ stats.exam_completed }} · {{ stats.exam_percent }}%</small></div>
+    </a>
+    <a class="stat-card accent-green" href="{{ url_for('students_page') }}">
+      <div class="stat-icon">♙</div><div><span>{{ '参与用户' if current_user.role in ['teacher','assistant'] else '课程成员' }}</span><strong>{{ stats.participants }}</strong><small>个系统账号</small></div>
+    </a>
+  </section>
+
+  <div class="dashboard-grid">
+    <section class="panel" id="attention">
+      <div class="panel-heading"><div><span class="pulse-dot"></span><h2>Items that need your attention</h2></div><a href="{{ url_for('assignments_page') }}">查看全部 →</a></div>
+      <div class="attention-list">
+        {% for item in attention %}
+        <a class="attention-item" href="{{ url_for('assignment_detail', assignment_id=item.assignment_id) }}#discussion-{{ item.id }}">
+          <span class="avatar avatar-student">{{ item.user_name[0] }}</span>
+          <span class="attention-copy"><strong>{{ item.user_name }} 在「{{ item.assignment_title }}」中提问</strong><span>{{ item.content }}</span><small>{{ item.created_at|relative_time }}</small></span>
+          <span class="chevron">›</span>
+        </a>
+        {% else %}<div class="empty-state">当前没有需要处理的互动。</div>{% endfor %}
+      </div>
+    </section>
+
+    <aside class="panel quick-panel">
+      <div class="panel-heading"><div><h2>Quick access</h2></div></div>
+      <div class="quick-links">
+        {% if current_user.role == 'teacher' %}<a href="{{ url_for('assignment_new') }}"><span class="quick-icon purple">＋</span><span><strong>布置新任务</strong><small>创建并指派课程作业</small></span></a>{% endif %}
+        <a href="{{ url_for('assignments_page') }}"><span class="quick-icon blue">▣</span><span><strong>查看所有任务</strong><small>跟进任务与互动</small></span></a>
+        <a href="{{ url_for('exams_page') }}"><span class="quick-icon orange">▤</span><span><strong>{% if current_user.role == 'teacher' %}发布考试{% elif current_user.role == 'assistant' %}查看考试与评分{% else %}查看考试{% endif %}</strong><small>{% if current_user.role == 'teacher' %}设置随堂、期中或期末考试{% elif current_user.role == 'assistant' %}审阅答卷并协助评分{% else %}查看考试安排并进入答题{% endif %}</small></span></a>
+        <a href="{{ url_for('analytics_page') }}"><span class="quick-icon green">⌁</span><span><strong>{{ '生成学情分析' if current_user.role == 'teacher' else '查看我的学情' }}</strong><small>{{ '查看个体参与情况' if current_user.role == 'teacher' else '了解互动与提交情况' }}</small></span></a>
+      </div>
+    </aside>
+  </div>
+
+  <section class="panel updates-panel">
+    <div class="panel-heading"><div><h2>Follow the latest updates</h2></div><span class="muted">最近 8 条动态</span></div>
+    <div class="timeline">
+      {% for item in activities %}
+      <a class="timeline-item" href="{% if item.entity_type == 'exam' %}{{ url_for('exams_page') }}#exam-{{ item.entity_id }}{% elif item.entity_type == 'question_bank' %}{{ url_for('question_bank_page') }}{% else %}{{ url_for('assignment_detail', assignment_id=item.entity_id) }}#activity{% endif %}">
+        <span class="timeline-line"></span><span class="avatar avatar-sm avatar-{{ item.role }}">{{ item.user_name[0] }}</span>
+        <span><strong>{{ item.user_name }}</strong> {% if item.entity_type == 'exam' %}更新了考试{% elif item.entity_type == 'question_bank' %}更新了题库{% elif item.event_type == 'system' %}更新了{% else %}在{% endif %} <b>{{ item.title }}</b><p>{{ item.content }}</p><small>{{ item.created_at|relative_time }}</small></span>
+      </a>
+      {% else %}<div class="empty-state">暂无课程动态。</div>{% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

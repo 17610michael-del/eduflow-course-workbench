@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}学生信息{% endblock %}
+{% block content %}
+<div class="page wide-page">
+  <div class="page-header">
+    <div><p class="eyebrow">STUDENT DIRECTORY</p><h1>学生信息</h1><p>{{ '按学习小组查看学生账号与学习活动概况。' if current_user.role in ['teacher','assistant'] else '这里仅显示你自己的基础信息和学习记录。' }}</p></div>
+    <span class="directory-count">{{ students|length }} {{ '名学生' if current_user.role in ['teacher','assistant'] else '份个人档案' }}</span>
+  </div>
+  <div class="info-banner"><span>ⓘ</span><div><strong>{{ '按小组整理' if current_user.role in ['teacher','assistant'] else '个人信息保护' }}</strong><p>{{ '组长排在每组第一位，其他组员按姓名排序。' if current_user.role in ['teacher','assistant'] else '学生账号仅能查看本人的信息、作业和考试记录。' }}</p></div></div>
+  {% macro student_table(items) %}<div class="table-scroll"><table class="student-table directory-table">
+      <thead><tr><th>学生</th><th>Linux 用户名</th><th>小组</th><th>被指派任务</th><th>互动评论</th><th>作业提交</th><th>考试记录</th><th>首次建档</th><th>最近登录</th></tr></thead>
+      <tbody>{% for student in items %}<tr data-student-row="{{ student.username }} {{ student.display_name }}">
+        <td><div class="student-cell"><span class="avatar avatar-student">{{ student.display_name[0] }}</span><span><strong>{{ student.display_name }} {% if student.is_group_leader %}<em class="leader-badge">组长</em>{% endif %}</strong><small>{{ '这是我' if current_user.username == student.username else '@' ~ student.username }}</small></span></div></td>
+        <td><code>@{{ student.username }}</code></td><td>{{ student.group_name or '未分组' }}</td><td><span class="metric-number">{{ student.assigned_count }}</span></td><td><span class="metric-number">{{ student.discussion_count }}</span></td><td><span class="metric-number">{{ student.submission_count }}</span></td><td><span class="metric-number">{{ student.exam_submission_count }}/{{ student.exam_total }}</span></td><td>{{ student.created_at|date_cn }}</td><td>{% if student.last_login_at %}{{ student.last_login_at|relative_time }}{% else %}<span class="muted">尚未登录</span>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>{% endmacro %}
+  <section class="panel table-panel">
+    <div class="table-toolbar"><label class="search-field compact"><span>⌕</span><input placeholder="搜索用户名或显示名..." data-student-search aria-label="搜索学生"></label><span>数据来自已登录系统的 Linux 学生账号</span></div>
+    {% if current_user.role in ['teacher','assistant'] %}<div class="grouped-directory">{% for group in grouped_students %}<section class="directory-group"><header><div><span class="directory-group-icon">{{ group.name[0] }}</span><span><strong>{{ group.name }}</strong><small>{{ group.students|length }} 名学生 · 组长优先</small></span></div></header>{{ student_table(group.students) }}</section>{% else %}<div class="empty-state">尚无学生账号登录系统。</div>{% endfor %}</div>{% else %}{{ student_table(students) }}{% endif %}
+  </section>
+</div>
+{% endblock %}

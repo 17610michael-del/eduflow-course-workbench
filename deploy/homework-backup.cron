@@ -1,0 +1,4 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+0 3 * * * eduflow /opt/eduflow/app/deploy/backup-homework.sh >> /opt/eduflow/backup/backup.log 2>&1

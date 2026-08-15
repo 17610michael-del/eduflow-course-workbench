@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}{{ assignment.title }}{% endblock %}
+{% block content %}
+<div class="detail-shell">
+  <nav class="breadcrumbs detail-breadcrumbs"><a href="{{ url_for('assignments_page') }}">任务列表</a><span>›</span><span>#{{ assignment.id }}</span></nav>
+  <header class="issue-header">
+    <div>
+      <h1>{{ assignment.title }}</h1>
+      <div class="issue-subline"><span class="status-pill {{ assignment.status }}">{{ '◉ Open' if assignment.status == 'open' else '✓ Closed' }}</span><span>Task created {{ assignment.created_at|relative_time }} by <strong>{{ assignment.creator_name }}</strong></span></div>
+    </div>
+    <div class="issue-actions"><button class="btn btn-secondary btn-sm" type="button" data-copy-link>复制链接</button>{% if current_user.role == 'student' and assignment.status == 'open' %}<button class="btn btn-primary btn-sm" type="button" data-open-submit>⇧ 提交作业</button>{% elif current_user.role == 'teacher' %}<a class="btn btn-primary btn-sm" href="{{ url_for('assignment_new') }}">＋ 新任务</a><form action="{{ url_for('delete_assignment', assignment_id=assignment.id) }}" method="post" onsubmit="return confirm('确定删除任务“{{ assignment.title|e }}”吗？提交记录会从任务中移除，但删除审计会保留。')"><button class="btn btn-danger btn-sm" type="submit">删除任务</button></form>{% endif %}</div>
+  </header>
+
+  <div class="issue-layout">
+    <div class="issue-center">
+      <article class="issue-description panel">
+        <div class="author-strip"><span class="avatar avatar-teacher">{{ assignment.creator_name[0] }}</span><div><strong>{{ assignment.creator_name }}</strong><small>发布于 {{ assignment.created_at|date_cn }}</small></div><span class="author-badge">AUTHOR</span></div>
+        <div class="markdown-body">{{ assignment.description|markdown|safe }}</div>
+        {% if assignment.attachment_url %}<a class="attachment-chip" href="{{ url_for('uploaded_file', filename=assignment.attachment_url) }}">↧ 下载任务附件</a>{% endif %}
+      </article>
+
+      <div class="interaction-tabs"><button class="active" type="button" data-tab-target="activity-panel">Activity 互动</button><button type="button" data-tab-target="assistant-panel"><span>✦</span> AI 助教</button></div>
+      <section class="activity-section tab-panel active" id="activity-panel" data-tab-panel>
+        <div class="activity-heading"><div><h2>Activity</h2><span>{{ discussions|length }} 项动态</span></div><select aria-label="互动筛选"><option>All activity</option><option>Only comments</option></select></div>
+        {% if current_user.role == 'student' %}
+        <div class="activity-submit-card {{ 'submitted' if my_submissions else '' }}">
+          <span class="activity-submit-icon">{{ '✓' if my_submissions else '⇧' }}</span>
+          <div class="activity-submit-copy">
+            <span class="activity-submit-kicker">ASSIGNMENT SUBMISSION</span>
+            {% if my_submissions %}<span class="submission-success-badge">✓ 提交成功</span>{% endif %}
+            <strong>{{ '作业已成功提交 · v' ~ my_submissions[0].version if my_submissions else '提交本次作业' }}</strong>
+            <small>{% if my_submissions %}提交于 {{ my_submissions[0].submitted_at|relative_time }}，系统已保存本次作业{% else %}截止时间：{{ assignment.due_date|date_cn }}{% endif %}</small>
+          </div>
+          {% if my_submissions %}
+          <div class="activity-submit-actions">
+            <a class="btn btn-success" href="{{ url_for('uploaded_file', filename=my_submissions[0].file_url) }}">查看已提交文件</a>
+            {% if assignment.status == 'open' %}<button class="btn btn-secondary" type="button" data-open-submit>提交新版本</button>{% endif %}
+          </div>
+          {% elif assignment.status == 'open' %}<button class="btn btn-primary" type="button" data-open-submit>选择文件提交</button>{% else %}<span class="status-pill closed">已关闭</span>{% endif %}
+        </div>
+        {% if my_submissions %}
+        <section class="student-grade-card {{ ('score-low' if my_grade.score < 60 else 'score-mid' if my_grade.score < 90 else 'score-high') if my_grade else 'pending' }}" id="my-grade">
+          <div class="grade-mark">{% if my_grade %}<strong>{{ my_grade.score }}</strong><small>/ 100</small>{% else %}<strong>…</strong>{% endif %}</div>
+          <div class="grade-copy">
+            <span class="grade-kicker">TEACHER GRADE</span>
+            <h3>{{ '老师已评分' if my_grade else '等待老师评分' }}</h3>
+            {% if my_grade %}<p>{{ my_grade.feedback or '老师暂未填写评语。' }}</p><small>评分时间：{{ my_grade.graded_at|relative_time }}</small>{% else %}<p>作业已进入待批改列表，评分后会显示在这里。</p>{% endif %}
+          </div>
+        </section>
+        {% endif %}
+        {% endif %}
+        {% if current_user.role in ['teacher','assistant'] and latest_submissions %}
+        <section class="grading-panel" id="grading">
+          <div class="grading-heading"><div><span class="grade-kicker">ASSIGNMENT GRADING</span><h3>作业评分</h3></div><span>{{ latest_submissions|length }} 位学生已提交</span></div>
+          <div class="grading-list">
+            {% for sub in latest_submissions %}
+            <form class="grading-card {{ ('score-low' if sub.score < 60 else 'score-mid' if sub.score < 90 else 'score-high') if sub.score is not none else '' }}" action="{{ url_for('grade_assignment', assignment_id=assignment.id, student_id=sub.student_id) }}" method="post">
+              <div class="grading-student"><span class="avatar avatar-student">{{ sub.name[0] }}</span><span><strong>{{ sub.name }}</strong><small>@{{ sub.username }} · 最新版本 v{{ sub.version }} · {{ sub.submitted_at|relative_time }}</small></span><a href="{{ url_for('uploaded_file', filename=sub.file_url) }}">查看作业</a></div>
+              <div class="grading-fields"><label><span>分数</span><span class="score-input"><input type="number" name="score" min="0" max="100" required value="{{ sub.score if sub.score is not none else '' }}" placeholder="0"><em>/ 100</em></span></label><label class="feedback-field"><span>教师评语</span><textarea name="feedback" rows="2" maxlength="2000" placeholder="填写对本次作业的评价和改进建议">{{ sub.feedback or '' }}</textarea></label><button class="btn {{ 'btn-secondary' if sub.score is not none else 'btn-primary' }}" type="submit">{{ '更新评分' if sub.score is not none else '保存评分' }}</button></div>
+            </form>
+            {% endfor %}
+          </div>
+        </section>
+        {% endif %}
+        <div class="activity-feed">
+          {% for item in discussions %}
+            {% if item.kind == 'system' %}
+            <div class="system-event" id="discussion-{{ item.id }}"><span class="system-icon">◆</span><p>{{ item.content }} <small>· {{ item.created_at|relative_time }}</small>{% if item.attachment_url %} · <a class="system-download" href="{{ url_for('uploaded_file', filename=item.attachment_url) }}">下载文件</a>{% endif %}</p></div>
+            {% else %}
+            <article class="discussion" id="discussion-{{ item.id }}">
+              <span class="avatar avatar-{{ item.user_role }}">{{ item.user_name[0] }}</span>
+              <div class="discussion-body">
+                <div class="comment-card">
+                  <header><div><strong>{{ item.user_name }}</strong><span class="role-tag {{ item.user_role }}">{{ '老师' if item.user_role == 'teacher' else ('助教' if item.user_role == 'assistant' else '学生') }}</span><small>{{ item.created_at|relative_time }}</small></div><button type="button" aria-label="评论菜单">•••</button></header>
+                  <div class="comment-content">{{ item.content|markdown|safe }}</div>
+                  {% if item.attachment_url %}<a class="attachment-chip" href="{{ url_for('uploaded_file', filename=item.attachment_url) }}">↧ 下载附件{% if item.user_role == 'student' %} · 作业提交{% endif %}</a>{% endif %}
+                  {% if assignment.status == 'open' %}<button class="reply-link" type="button" data-reply-to="{{ item.id }}" data-reply-name="{{ item.user_name }}">↩ 回复</button>{% endif %}
+                </div>
+                {% for reply in replies.get(item.id, []) %}
+                <div class="reply-row">
+                  <span class="avatar avatar-sm avatar-{{ reply.user_role }}">{{ reply.user_name[0] }}</span>
+                  <div class="comment-card reply-card"><header><div><strong>{{ reply.user_name }}</strong><span class="role-tag {{ reply.user_role }}">{{ '老师' if reply.user_role == 'teacher' else ('助教' if reply.user_role == 'assistant' else '学生') }}</span><small>{{ reply.created_at|relative_time }}</small></div></header><div class="comment-content">{{ reply.content|markdown|safe }}</div>{% if reply.attachment_url %}<a class="attachment-chip" href="{{ url_for('uploaded_file', filename=reply.attachment_url) }}">↧ 下载附件</a>{% endif %}</div>
+                </div>
+                {% endfor %}
+              </div>
+            </article>
+            {% endif %}
+          {% endfor %}
+        </div>
+
+        {% if assignment.status == 'open' %}
+        <form class="comment-composer panel" action="{{ url_for('add_comment', assignment_id=assignment.id) }}" method="post" enctype="multipart/form-data" id="comment-form">
+          <span class="avatar avatar-{{ current_user.role }}">{{ current_user.name[0] }}</span>
+          <div class="composer-main">
+            <div class="reply-indicator" id="reply-indicator" hidden>正在回复 <strong></strong><button type="button" data-cancel-reply>×</button></div>
+            <input type="hidden" name="parent_id" id="parent-id">
+            <div class="editor-box" data-file-drop>
+              <div class="editor-toolbar" aria-label="格式工具栏">
+                <button type="button" data-format="bold" title="粗体"><b>B</b></button><button type="button" data-format="italic" title="斜体"><i>I</i></button><button type="button" data-format="link" title="链接">🔗</button><button type="button" data-format="code" title="代码">&lt;/&gt;</button><button type="button" data-format="list" title="列表">☷</button><label title="添加附件">▧<input type="file" name="attachment" id="comment-file"></label><span class="toolbar-hint">Markdown supported</span>
+              </div>
+              <textarea name="content" id="comment-content" rows="6" placeholder="Write a comment or drag your files here..."></textarea>
+              <div class="file-preview" id="file-preview" hidden><span>▧</span><strong></strong><button type="button">×</button></div>
+              <div class="drop-overlay">松开鼠标上传文件</div>
+            </div>
+            <div class="composer-actions"><small>以 <strong>{{ current_user.name }}</strong> 身份发布</small><div><button class="btn btn-primary" type="submit">Comment</button>{% if current_user.role == 'teacher' %}<button class="btn btn-secondary" type="submit" formaction="{{ url_for('close_assignment', assignment_id=assignment.id) }}" formnovalidate>Close task</button>{% endif %}</div></div>
+          </div>
+        </form>
+        {% else %}<div class="closed-note">✓ 此任务已关闭。{% if current_user.role == 'teacher' %}<form action="{{ url_for('close_assignment', assignment_id=assignment.id) }}" method="post"><button class="btn btn-secondary btn-sm">重新打开任务</button></form>{% endif %}</div>{% endif %}
+      </section>
+      <section class="assistant-panel tab-panel" id="assistant-panel" data-tab-panel hidden>
+        <div class="assistant-intro"><span>✦</span><div><h2>AI 任务助教</h2><p>由 DeepSeek 结合任务要求和近期讨论提供回答。</p></div></div>
+        <div class="chat-window" id="chat-window">
+          <div class="chat-message assistant"><span class="chat-avatar">AI</span><div><strong>任务助教</strong><p>你好！关于“{{ assignment.title }}”有什么可以帮助你的？</p></div></div>
+          {% for log in chat_logs %}<div class="chat-message user"><div><strong>你</strong><p>{{ log.message }}</p></div></div><div class="chat-message assistant"><span class="chat-avatar">AI</span><div><strong>任务助教</strong><p>{{ log.reply }}</p></div></div>{% endfor %}
+        </div>
+        <form class="chat-composer" id="chat-form" data-assignment-id="{{ assignment.id }}"><textarea rows="3" placeholder="输入关于本任务的问题..." required></textarea><div><small>AI 回复仅供参考</small><button class="btn btn-primary" type="submit">发送 ↗</button></div></form>
+      </section>
+    </div>
+
+    <aside class="issue-sidebar">
+      <section><h3>Assignee</h3><div class="assignee-list">{% for person in assignment.assignees %}<div><span class="avatar avatar-sm avatar-student">{{ person.display_name[0] }}</span><span><strong>{{ person.display_name }}</strong><small>@{{ person.username }}</small></span></div>{% else %}<span class="muted">未指派</span>{% endfor %}</div></section>
+      <section><h3>Labels</h3><div class="labels-wrap">{% for label in assignment.labels %}<span class="label">{{ label }}</span>{% else %}<span class="muted">无标签</span>{% endfor %}</div></section>
+      <section><h3>Dates</h3><div class="sidebar-data"><span>Due date</span><strong>{{ assignment.due_date|date_cn }}</strong></div></section>
+      <section><h3>Progress</h3><div class="progress-label"><span>已提交</span><strong>{{ assignment.submitted_count }}/{{ assignment.assignees|length }}</strong></div><div class="progress"><i style="width: {{ (assignment.submitted_count / (assignment.assignees|length or 1) * 100)|round }}%"></i></div></section>
+      <section><h3>Participants · {{ participants|length }}</h3><div class="avatar-stack">{% for person in participants %}<span class="avatar avatar-sm avatar-{{ person.role }}" title="{{ person.display_name }}">{{ person.display_name[0] }}</span>{% endfor %}</div></section>
+      {% if current_user.role in ['teacher','assistant'] and submissions %}<section><h3>Submissions · {{ submissions|length }}</h3><div class="submission-list">{% for sub in submissions %}<div class="submission-record"><a href="{{ url_for('uploaded_file', filename=sub.file_url) }}"><span>▧</span><span><strong>{{ sub.name }} · v{{ sub.version }}</strong><small>{{ sub.submitted_at|relative_time }}</small></span></a>{% if current_user.role == 'teacher' %}<form action="{{ url_for('delete_submission', assignment_id=assignment.id, submission_id=sub.id) }}" method="post" onsubmit="return confirm('确定删除此提交版本吗？')"><button type="submit" aria-label="删除提交">×</button></form>{% endif %}</div>{% endfor %}</div></section>{% endif %}
+      {% if current_user.role == 'student' %}<section><h3>我的提交 · {{ my_submissions|length }}</h3><div class="submission-list">{% for sub in my_submissions %}<div class="submission-record"><a href="{{ url_for('uploaded_file', filename=sub.file_url) }}"><span>▧</span><span><strong>作业版本 v{{ sub.version }}</strong><small>{{ sub.submitted_at|relative_time }}</small></span></a><form action="{{ url_for('delete_submission', assignment_id=assignment.id, submission_id=sub.id) }}" method="post" onsubmit="return confirm('确定删除这个提交版本吗？删除记录会保留。')"><button type="submit" aria-label="删除提交">×</button></form></div>{% else %}<span class="muted">尚未提交</span>{% endfor %}</div></section>{% endif %}
+    </aside>
+  </div>
+</div>
+
+{% if current_user.role == 'student' and assignment.status == 'open' %}
+<dialog class="modal submit-modal" id="submit-modal">
+  <form action="{{ url_for('submit_assignment', assignment_id=assignment.id) }}" method="post" enctype="multipart/form-data" data-draft-form data-draft-type="assignment_submission" data-draft-key="{{ assignment.id }}">
+    <header><div><h2>{{ '提交新版本' if my_submissions else '提交作业' }}</h2><p>{% if my_submissions %}当前版本 v{{ my_submissions[0].version }} · {% endif %}{{ assignment.title }}</p></div><button type="button" data-close-submit aria-label="关闭">×</button></header>
+    <div class="modal-body">
+      <div class="source-tabs" role="radiogroup" aria-label="文件来源">
+        {% set draft_source = submission_draft.data.source if submission_draft else 'local' %}
+        <label class="{{ 'active' if draft_source == 'local' else '' }}"><input type="radio" name="source" value="local" {% if draft_source == 'local' %}checked{% endif %}><span>▣</span><strong>本地电脑</strong><small>从当前设备选择文件</small></label>
+        <label class="{{ 'active' if draft_source == 'server' else '' }}"><input type="radio" name="source" value="server" {% if draft_source == 'server' %}checked{% endif %}><span>⌘</span><strong>服务器文件</strong><small>从个人暂存区选择</small></label>
+      </div>
+      <div class="submission-source" data-source-panel="local" {% if draft_source != 'local' %}hidden{% endif %}>
+        <label class="file-drop submit-drop"><input type="file" name="local_file" data-draft-file accept=".pdf,.doc,.docx,.zip,.png,.jpg,.jpeg"><span class="upload-icon">⇧</span><span><strong>{{ submission_draft.file_name if submission_draft and submission_draft.file_name else '选择作业文件' }}</strong><span class="file-drop-action">{% if submission_draft and submission_draft.file_name %} 草稿文件已保存{% else %} 或拖到这里{% endif %}</span><small>PDF、Word、ZIP 或图片，最大 20MB</small></span></label>
+      </div>
+      <div class="submission-source" data-source-panel="server" {% if draft_source != 'server' %}hidden{% endif %}>
+        {% if server_files %}<label class="form-group"><span>服务器暂存文件</span><select name="server_file">{% for file in server_files %}<option value="{{ file.name }}" {% if submission_draft and submission_draft.data.server_file == file.name %}selected{% endif %}>{{ file.name }} · {{ (file.size / 1024)|round(1) }} KB</option>{% endfor %}</select></label>
+        {% else %}<div class="server-empty"><span>⌘</span><strong>暂存区暂无可用文件</strong><p>先通过 SSH/SFTP 将文件放入：</p><code>{{ server_submission_path }}</code></div>{% endif %}
+      </div>
+    </div>
+    <footer><span class="submission-note" data-draft-status>{% if submission_draft %}草稿保存于 {{ submission_draft.updated_at|relative_time }}{% else %}选择项会自动保存{% endif %}</span><button class="btn btn-secondary" type="button" data-close-submit>取消</button><button class="btn btn-secondary" type="button" data-save-draft>保存草稿</button><button class="btn btn-primary" type="submit">确认提交</button></footer>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}
