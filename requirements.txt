@@ -5,4 +5,4 @@ python-pam==2.0.2
 six==1.17.0
 bleach==6.2.0
 Markdown==3.8.2
-pypdf==6.1.1
+pypdf==6.15.0
