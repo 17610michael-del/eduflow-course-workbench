@@ -4,5 +4,5 @@ gunicorn==26.0.0
 python-pam==2.0.2
 six==1.17.0
 bleach==6.4.0
-Markdown==3.8.2
+Markdown==3.10.3
 pypdf==6.15.0
