@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ASSISTANT_GROUP="assistant"
+PROJECT_READ_GROUP="${PROJECT_READ_GROUP:-eduflow-staff-read}"
 read -r -a ASSISTANTS <<< "${ASSISTANT_USERS:-assistant01 assistant02}"
 
 if [[ $EUID -ne 0 ]]; then
@@ -18,15 +19,16 @@ make_user() {
 }
 
 getent group "$ASSISTANT_GROUP" >/dev/null 2>&1 || groupadd "$ASSISTANT_GROUP"
+getent group "$PROJECT_READ_GROUP" >/dev/null 2>&1 || groupadd "$PROJECT_READ_GROUP"
 
 echo "=== EduFlow 助教账号创建结果 ==="
 for a in "${ASSISTANTS[@]}"; do
   if id "$a" >/dev/null 2>&1; then
     echo "助教 $a  已存在，未改动密码"
-    usermod -aG "$ASSISTANT_GROUP" "$a" 2>/dev/null || true
+    usermod -aG "$ASSISTANT_GROUP,$PROJECT_READ_GROUP" "$a" 2>/dev/null || true
   else
     make_user "$a"
-    usermod -aG "$ASSISTANT_GROUP" "$a"
+    usermod -aG "$ASSISTANT_GROUP,$PROJECT_READ_GROUP" "$a"
     echo "助教 $a 已创建；首次登录必须修改密码"
   fi
 done

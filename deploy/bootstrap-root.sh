@@ -18,6 +18,7 @@ mkdir -p "$APP_ROOT/app" "$APP_ROOT/data/uploads" "$APP_ROOT/backup"
 chown -R "$APP_USER:$APP_USER" "$APP_ROOT"
 groupadd -f teacher
 groupadd -f assistant
+groupadd -f eduflow-staff-read
 usermod -aG shadow "$APP_USER"
 
 echo "主机初始化完成。请重新登录 $APP_USER，使 shadow 组权限生效。"
