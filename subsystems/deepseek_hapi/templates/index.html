@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DeepSeek 项目工作台</title>
+  <link rel="stylesheet" href="{{ url_for('static',filename='workbench.css') }}">
+  <script defer src="{{ url_for('static',filename='workbench.js') }}"></script>
+</head>
+<body data-workbench data-session-id="{{ selected.id if selected else '' }}">
+  <aside class="sidebar">
+    <header class="brand"><span>DS</span><div><strong>DeepSeek</strong><small>项目工作台</small></div></header>
+    <button class="new-chat" type="button" data-open-new>＋ 新建对话</button>
+    <div class="session-label">会话</div>
+    <nav class="sessions">
+      {% for item in sessions %}
+      <a href="/?session={{ item.id }}" class="session-item {% if selected and selected.id==item.id %}active{% endif %}">
+        <span class="chat-icon">◇</span><span><strong>{{ item.title }}</strong><small>{{ item.model }} · {{ item.updated_at[:16].replace('T',' ') }}</small></span>
+        <button type="button" data-delete-session="{{ item.id }}" title="删除对话">×</button>
+      </a>
+      {% else %}<div class="empty-sessions">暂无会话</div>{% endfor %}
+    </nav>
+    <footer class="identity"><span>{{ user.display_name[0] }}</span><div><strong>{{ user.display_name }}</strong><small>@{{ user.username }} · {{ user.role }}</small></div></footer>
+  </aside>
+
+  <main class="chat-column">
+    <header class="topbar">
+      <div><strong>{{ selected.title if selected else 'DeepSeek 项目助手' }}</strong><small>{% if selected %}{{ selected.workspace_root }}{% else %}选择项目后开始对话{% endif %}</small></div>
+      <div class="top-actions">
+        {% if selected %}
+        <label>模型
+          <select data-model-select>
+            {% for value,label in models.items() %}<option value="{{ value }}" {% if selected.model==value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        <span class="api-state {{ 'online' if api_enabled else 'offline' }}"><i></i>{{ 'DeepSeek API' if api_enabled else 'API 未配置' }}</span>
+      </div>
+    </header>
+
+    <section class="messages" data-messages>
+      {% if not selected %}
+      <div class="welcome"><span>DS</span><h1>今天想分析哪个项目？</h1><p>固定使用 DeepSeek API，项目上下文只属于当前用户。</p><button type="button" data-open-new>新建项目对话</button></div>
+      {% elif not messages %}
+      <div class="welcome" data-welcome><span>DS</span><h1>开始分析项目</h1><p>可以让 DeepSeek 查看目录、阅读代码、定位问题或解释实现。</p><div class="suggestions"><button data-prompt="先浏览项目目录，概括项目结构和主要功能">概括项目</button><button data-prompt="阅读项目入口和核心代码，说明执行流程">分析代码流程</button><button data-prompt="搜索项目中的 TODO、FIXME 和明显风险，给出改进建议">检查潜在问题</button></div></div>
+      {% endif %}
+      {% for message in messages %}
+      <article class="message {{ message.role }}">
+        <span class="avatar">{{ 'DS' if message.role=='assistant' else user.display_name[0] }}</span>
+        <div><strong>{{ 'DeepSeek' if message.role=='assistant' else user.display_name }}</strong><p>{{ message.content }}</p>
+          {% if message.tool_events %}<div class="tool-events">{% for event in message.tool_events %}<span class="{{ 'ok' if event.ok else 'error' }}">{{ '✓' if event.ok else '!' }} {{ {'list_directory':'浏览目录','read_file':'读取文件','search_text':'搜索代码'}.get(event.name,event.name) }}</span>{% endfor %}</div>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    <form class="composer" data-message-form>
+      <div><textarea rows="2" maxlength="8000" placeholder="向 DeepSeek 询问当前项目…" {% if not selected or not api_enabled %}disabled{% endif %}></textarea><button type="submit" {% if not selected or not api_enabled %}disabled{% endif %}>↑</button></div>
+      <small>DeepSeek 可能会出错，请核对重要代码和结论。</small>
+    </form>
+  </main>
+
+  <aside class="files-column">
+    <header><div><span>▣</span><strong>项目文件</strong></div><button type="button" data-refresh-files {% if not selected %}disabled{% endif %}>↻</button></header>
+    {% if selected %}
+    <div class="project-root"><span>当前项目</span><strong>{{ selected.workspace_root }}</strong><small>只读访问 · 敏感文件已屏蔽</small></div>
+    <div class="file-path"><button type="button" data-file-back disabled>←</button><span data-current-path>.</span></div>
+    <div class="file-list" data-file-list>
+      {% for entry in entries %}<button type="button" data-file-path="{{ entry.path }}" data-file-type="{{ entry.type }}"><span>{{ '▸' if entry.type=='directory' else '◇' }}</span><span><strong>{{ entry.name }}</strong><small>{% if entry.type=='directory' %}目录{% else %}{{ (entry.size/1024)|round(1) }} KB{% endif %}</small></span></button>{% else %}<p>目录为空</p>{% endfor %}
+    </div>
+    <section class="preview" data-preview hidden><header><strong data-preview-name></strong><button type="button" data-close-preview>×</button></header><pre data-preview-content></pre></section>
+    {% else %}<div class="files-placeholder"><span>▣</span><p>新建会话后显示项目文件</p></div>{% endif %}
+  </aside>
+
+  <dialog class="new-dialog" data-new-dialog>
+    <form method="dialog"><header><div><strong>新建项目对话</strong><small>选择项目和 DeepSeek 模型</small></div><button value="cancel">×</button></header></form>
+    <form data-new-session-form>
+      <label>项目目录<select name="project" {% if not workspace_available %}disabled{% endif %}><option value=".">个人工作区根目录（{{ workspace }}）</option>{% for project in projects %}<option value="{{ project.path }}">{{ project.name }}</option>{% endfor %}</select></label>
+      <label>DeepSeek 模型<select name="model">{% for value,label in models.items() %}<option value="{{ value }}" {% if value=='deepseek-v4-flash' %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <div class="single-ai-note"><span>DS</span><div><strong>固定使用 DeepSeek API</strong><small>单助手对话模式，项目与对话按当前用户隔离。</small></div></div>
+      {% if not workspace_available %}<p class="dialog-error">个人工作区不存在或当前不可读。</p>{% endif %}
+      <button class="start-button" type="submit" {% if not workspace_available %}disabled{% endif %}>开始对话</button>
+    </form>
+  </dialog>
+</body>
+</html>

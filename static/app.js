@@ -113,6 +113,48 @@
     $('[data-save-draft]', form)?.addEventListener('click', () => saveDraft(true));
   });
 
+  $$('[data-toggle-checks]').forEach((button) => {
+    const picker = button.closest('.assignee-picker');
+    const checkboxes = $$('input[type="checkbox"]', picker);
+    const count = $('[data-selection-count]', picker);
+    const updatePickerSelection = () => {
+      const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
+      const allSelected = checkboxes.length > 0 && selected === checkboxes.length;
+      if (count) count.textContent = `已选 ${selected}/${checkboxes.length}`;
+      button.textContent = allSelected ? '取消全选' : button.dataset.selectLabel;
+      button.classList.toggle('is-clear', allSelected);
+      button.disabled = checkboxes.length === 0;
+    };
+    button.addEventListener('click', () => {
+      const shouldCheck = checkboxes.some((checkbox) => !checkbox.checked);
+      checkboxes.forEach((checkbox) => {
+        if (checkbox.checked === shouldCheck) return;
+        checkbox.checked = shouldCheck;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      updatePickerSelection();
+    });
+    checkboxes.forEach((checkbox) => checkbox.addEventListener('change', updatePickerSelection));
+    updatePickerSelection();
+  });
+
+  const assignmentModePicker = $('[data-assignment-mode-picker]');
+  if (assignmentModePicker) {
+    const individualPanel = $('[data-individual-assignees]');
+    const groupPanel = $('[data-group-assignees]');
+    const syncAssignmentMode = () => {
+      const mode = $('input[name="assignment_mode"]:checked', assignmentModePicker)?.value || 'individual';
+      const grouped = mode === 'group';
+      individualPanel.hidden = grouped;
+      groupPanel.hidden = !grouped;
+      $$('input[type="checkbox"]', individualPanel).forEach((input) => { input.disabled = grouped; });
+      $$('input[type="checkbox"]', groupPanel).forEach((input) => { input.disabled = !grouped; });
+      $$('label', assignmentModePicker).forEach((label) => label.classList.toggle('active', label.querySelector('input')?.checked));
+    };
+    $$('input[name="assignment_mode"]', assignmentModePicker).forEach((input) => input.addEventListener('change', syncAssignmentMode));
+    syncAssignmentMode();
+  }
+
   const examBuilder = $('[data-exam-builder]');
   if (examBuilder) {
     const mode = $('[data-exam-mode]', examBuilder);
@@ -218,6 +260,38 @@
       row.hidden = !row.dataset.studentRow.toLowerCase().includes(keyword);
     });
   });
+
+  const userSearch = $('[data-user-search]');
+  const userFilterButtons = $$('[data-user-filter]');
+  const userRoleCards = $$('[data-user-role-filter]');
+  if (userSearch) {
+    let activeUserRole = 'all';
+    const refreshUserDirectory = () => {
+      const keyword = userSearch.value.trim().toLowerCase();
+      let visibleCount = 0;
+      $$('[data-user-role-section]').forEach((section) => {
+        const roleMatches = activeUserRole === 'all' || section.dataset.userRoleSection === activeUserRole;
+        let sectionVisibleCount = 0;
+        $$('[data-user-row]', section).forEach((row) => {
+          const visible = roleMatches && row.dataset.userRow.toLowerCase().includes(keyword);
+          row.hidden = !visible;
+          if (visible) sectionVisibleCount += 1;
+        });
+        section.hidden = !roleMatches || sectionVisibleCount === 0;
+        visibleCount += sectionVisibleCount;
+      });
+      $('[data-user-empty]')?.toggleAttribute('hidden', visibleCount !== 0);
+    };
+    const selectUserRole = (role) => {
+      activeUserRole = role;
+      userFilterButtons.forEach((button) => button.classList.toggle('active', button.dataset.userFilter === role));
+      userRoleCards.forEach((card) => card.classList.toggle('active', role === 'all' || card.dataset.userRoleFilter === role));
+      refreshUserDirectory();
+    };
+    userSearch.addEventListener('input', refreshUserDirectory);
+    userFilterButtons.forEach((button) => button.addEventListener('click', () => selectUserRole(button.dataset.userFilter)));
+    userRoleCards.forEach((card) => card.addEventListener('click', () => selectUserRole(card.dataset.userRoleFilter)));
+  }
 
   const submitModal = $('#submit-modal');
   $$('[data-open-submit]').forEach((button) => button.addEventListener('click', () => submitModal?.showModal()));
@@ -399,6 +473,397 @@
       textarea.focus();
     }
   });
+
+  const aiChat = $('[data-ai-chat]');
+  if (aiChat) {
+    const form = $('[data-ai-chat-form]', aiChat);
+    const textarea = $('textarea', form);
+    const sendButton = $('button[type=submit]', form);
+    const thread = $('[data-ai-chat-thread]', aiChat);
+    const welcome = $('[data-ai-chat-welcome]', aiChat);
+    const clearButton = $('[data-clear-ai-chat]', aiChat);
+    const scrollToLatest = () => { thread.scrollTop = thread.scrollHeight; };
+    const appendMessage = (role, content, options = {}) => {
+      const article = document.createElement('article');
+      article.className = `ai-message ${role}${options.error ? ' error' : ''}${options.loading ? ' loading' : ''}`;
+      if (options.loading) article.dataset.aiLoading = '';
+      if (role === 'assistant') {
+        const avatar = document.createElement('span');
+        avatar.className = 'ai-message-avatar';
+        avatar.textContent = options.error ? '!' : 'DS';
+        article.appendChild(avatar);
+      }
+      const bubble = document.createElement('div');
+      const author = document.createElement('strong');
+      const message = document.createElement('p');
+      author.textContent = role === 'user' ? '你' : options.error ? '暂时无法回复' : 'DeepSeek';
+      message.textContent = content;
+      bubble.append(author, message);
+      article.appendChild(bubble);
+      thread.appendChild(article);
+      if (welcome) welcome.hidden = true;
+      scrollToLatest();
+      return article;
+    };
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = textarea.value.trim();
+      if (!message || sendButton.disabled) return;
+      appendMessage('user', message);
+      textarea.value = '';
+      sendButton.disabled = true;
+      sendButton.textContent = '思考中…';
+      const loading = appendMessage('assistant', '正在整理回答…', { loading: true });
+      try {
+        const response = await fetch('/api/ai-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'DeepSeek API 暂时不可用');
+        loading.remove();
+        appendMessage('assistant', data.reply);
+        clearButton.disabled = false;
+      } catch (error) {
+        loading.remove();
+        appendMessage('assistant', error.message, { error: true });
+      } finally {
+        sendButton.disabled = false;
+        sendButton.innerHTML = '发送 <span>↗</span>';
+        textarea.focus();
+      }
+    });
+    textarea?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    $$('[data-ai-prompt]', aiChat).forEach((button) => button.addEventListener('click', () => {
+      textarea.value = button.dataset.aiPrompt;
+      textarea.focus();
+    }));
+    clearButton?.addEventListener('click', async () => {
+      if (!window.confirm('确定清空你的全部 AI 对话记录吗？')) return;
+      clearButton.disabled = true;
+      try {
+        const response = await fetch('/api/ai-chat/clear', { method: 'POST' });
+        if (!response.ok) throw new Error('清空失败，请稍后重试');
+        $$('.ai-message', thread).forEach((item) => item.remove());
+        if (welcome) welcome.hidden = false;
+      } catch (error) {
+        appendMessage('assistant', error.message, { error: true });
+        clearButton.disabled = false;
+      }
+    });
+    scrollToLatest();
+  }
+
+  const knowledgeBase = $('[data-knowledge-base]');
+  if (knowledgeBase) {
+    const fileInput = $('[data-knowledge-file]', knowledgeBase);
+    const fileName = $('[data-knowledge-file-name]', knowledgeBase);
+    fileInput?.addEventListener('change', () => {
+      if (fileInput.files?.[0] && fileName) fileName.textContent = fileInput.files[0].name;
+    });
+
+    const form = $('[data-knowledge-form]', knowledgeBase);
+    const textarea = form ? $('textarea', form) : null;
+    const sendButton = form ? $('button[type=submit]', form) : null;
+    const thread = $('[data-knowledge-thread]', knowledgeBase);
+    const welcome = $('[data-knowledge-welcome]', knowledgeBase);
+    const clearButton = $('[data-clear-knowledge-chat]', knowledgeBase);
+    const username = knowledgeBase.dataset.knowledgeUsername;
+    const scrollToLatest = () => { if (thread) thread.scrollTop = thread.scrollHeight; };
+    const appendKnowledgeMessage = (role, content, sources = [], options = {}) => {
+      const article = document.createElement('article');
+      article.className = `knowledge-message ${role}${options.error ? ' error' : ''}${options.loading ? ' loading' : ''}`;
+      if (role === 'assistant') {
+        const avatar = document.createElement('span');
+        avatar.textContent = options.error ? '!' : 'AI';
+        article.appendChild(avatar);
+      }
+      const bubble = document.createElement('div');
+      const author = document.createElement('strong');
+      author.textContent = role === 'user' ? '你' : options.error ? '暂时无法回答' : '知识库助手';
+      const paragraph = document.createElement('p');
+      paragraph.textContent = content;
+      bubble.append(author, paragraph);
+      if (sources.length) {
+        const sourceBox = document.createElement('div');
+        sourceBox.className = 'knowledge-sources';
+        sources.forEach((source, index) => {
+          const link = document.createElement('a');
+          link.href = source.url;
+          const mark = document.createElement('b');
+          mark.textContent = `[${index + 1}] `;
+          link.append(mark, document.createTextNode(`${source.name} · 片段 ${source.chunk}`));
+          sourceBox.appendChild(link);
+        });
+        bubble.appendChild(sourceBox);
+      }
+      article.appendChild(bubble);
+      thread?.appendChild(article);
+      if (welcome) welcome.hidden = true;
+      scrollToLatest();
+      return article;
+    };
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = textarea.value.trim();
+      if (!message || sendButton.disabled) return;
+      appendKnowledgeMessage('user', message);
+      textarea.value = '';
+      sendButton.disabled = true;
+      sendButton.textContent = '检索中…';
+      const loading = appendKnowledgeMessage('assistant', '正在检索私有资料并组织回答…', [], { loading: true });
+      try {
+        const response = await fetch('/api/knowledge/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, username }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '知识库问答暂时不可用');
+        loading.remove();
+        appendKnowledgeMessage('assistant', data.reply, data.sources || []);
+        if (clearButton) clearButton.disabled = false;
+      } catch (error) {
+        loading.remove();
+        appendKnowledgeMessage('assistant', error.message, [], { error: true });
+      } finally {
+        sendButton.disabled = false;
+        sendButton.innerHTML = '检索并提问 <span>↗</span>';
+        textarea.focus();
+      }
+    });
+    textarea?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    $$('[data-knowledge-prompt]', knowledgeBase).forEach((button) => button.addEventListener('click', () => {
+      textarea.value = button.dataset.knowledgePrompt;
+      textarea.focus();
+    }));
+    clearButton?.addEventListener('click', async () => {
+      if (!window.confirm('确定清空你在当前学生知识库中的问答记录吗？')) return;
+      clearButton.disabled = true;
+      try {
+        const response = await fetch('/api/knowledge/chat/clear', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }),
+        });
+        if (!response.ok) throw new Error('清空失败，请稍后重试');
+        $$('.knowledge-message', thread).forEach((item) => item.remove());
+        if (welcome) welcome.hidden = false;
+      } catch (error) {
+        appendKnowledgeMessage('assistant', error.message, [], { error: true });
+        clearButton.disabled = false;
+      }
+    });
+    scrollToLatest();
+  }
+
+  const projectMonitor = $('[data-project-monitor]');
+  if (projectMonitor) {
+    const dialog = $('[data-agent-token-dialog]', projectMonitor);
+    const usernameField = $('[data-agent-username]', dialog);
+    const workspaceField = $('[data-agent-workspace]', dialog);
+    const tokenField = $('[data-agent-token]', dialog);
+    $$('[data-create-agent-token]', projectMonitor).forEach((button) => button.addEventListener('click', async () => {
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = '正在生成…';
+      try {
+        const username = button.dataset.createAgentToken;
+        const response = await fetch(`/api/project-agents/${encodeURIComponent(username)}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspace_root: button.dataset.workspace }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Token 生成失败');
+        usernameField.value = data.username;
+        workspaceField.value = data.workspace_root;
+        tokenField.value = data.token;
+        if (typeof dialog.showModal === 'function') dialog.showModal();
+        else dialog.setAttribute('open', '');
+        button.textContent = '查看 Token';
+      } catch (error) {
+        window.alert(error.message);
+        button.textContent = original;
+      } finally {
+        button.disabled = false;
+      }
+    }));
+    $$('[data-close-agent-dialog]', dialog).forEach((button) => button.addEventListener('click', () => {
+      tokenField.value = '';
+      if (typeof dialog.close === 'function') dialog.close();
+      else dialog.removeAttribute('open');
+    }));
+    $('[data-copy-agent-token]', dialog)?.addEventListener('click', async (event) => {
+      try {
+        await navigator.clipboard.writeText(tokenField.value);
+        event.currentTarget.textContent = '已复制';
+        setTimeout(() => { event.currentTarget.textContent = '复制'; }, 1500);
+      } catch (_) {
+        tokenField.select();
+      }
+    });
+  }
+
+  const deepseekWorkbench = $('[data-deepseek-workbench]');
+  if (deepseekWorkbench) {
+    const sessionId = deepseekWorkbench.dataset.sessionId;
+    const thread = $('[data-ds-chat-thread]', deepseekWorkbench);
+    const form = $('[data-ds-message-form]', deepseekWorkbench);
+    const textarea = form?.querySelector('textarea');
+    const sendButton = form?.querySelector('button[type=submit]');
+    const fileList = $('[data-ds-file-list]', deepseekWorkbench);
+    const pathLabel = $('[data-ds-current-path]', deepseekWorkbench);
+    const backButton = $('[data-ds-files-back]', deepseekWorkbench);
+    const preview = $('[data-ds-file-preview]', deepseekWorkbench);
+    let currentPath = '.';
+
+    const errorMessage = async (response, fallback) => {
+      try {
+        const data = await response.json();
+        return data.error || fallback;
+      } catch (_) {
+        return fallback;
+      }
+    };
+
+    $$('[data-new-ds-session]', deepseekWorkbench).forEach((button) => button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/deepseek-workbench/sessions', { method: 'POST' });
+        if (!response.ok) throw new Error(await errorMessage(response, '新建对话失败'));
+        const data = await response.json();
+        window.location.href = data.url;
+      } catch (error) {
+        window.alert(error.message);
+        button.disabled = false;
+      }
+    }));
+
+    $$('[data-delete-ds-session]', deepseekWorkbench).forEach((button) => button.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!window.confirm('确定删除这条项目对话吗？项目文件不会被删除。')) return;
+      button.disabled = true;
+      const response = await fetch(`/api/deepseek-workbench/sessions/${button.dataset.deleteDsSession}`, { method: 'DELETE' });
+      if (!response.ok) {
+        window.alert(await errorMessage(response, '删除对话失败'));
+        button.disabled = false;
+        return;
+      }
+      window.location.href = '/deepseek-workbench';
+    }));
+
+    $$('[data-ds-prompt]', deepseekWorkbench).forEach((button) => button.addEventListener('click', () => {
+      if (!textarea) return;
+      textarea.value = button.dataset.dsPrompt;
+      textarea.focus();
+    }));
+
+    const appendMessage = (role, content, toolEvents = []) => {
+      $('[data-ds-welcome]', thread)?.remove();
+      const article = document.createElement('article');
+      article.className = `ds-message ${role}`;
+      const events = toolEvents.length ? `<div class="ds-tool-events">${toolEvents.map((item) => `<span class="${item.ok ? 'ok' : 'error'}">${item.ok ? '✓' : '!'} ${escapeHtml({ list_directory: '浏览目录', read_file: '读取文件', search_text: '搜索代码' }[item.name] || item.name || '工具')}</span>`).join('')}</div>` : '';
+      article.innerHTML = `${role === 'assistant' ? '<span class="ds-message-avatar">DS</span>' : ''}<div><strong>${role === 'assistant' ? 'DeepSeek' : '你'}</strong><div class="ds-message-content"><p>${escapeHtml(content).replace(/\n/g, '<br>')}</p></div>${events}</div>`;
+      thread?.appendChild(article);
+      thread?.scrollTo({ top: thread.scrollHeight, behavior: 'smooth' });
+      return article;
+    };
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = textarea.value.trim();
+      if (!message || !sessionId) return;
+      textarea.value = '';
+      textarea.disabled = true;
+      sendButton.disabled = true;
+      appendMessage('user', message);
+      const loading = appendMessage('assistant', '正在查看项目并思考…');
+      loading.classList.add('loading');
+      try {
+        const response = await fetch(`/api/deepseek-workbench/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        });
+        if (!response.ok) throw new Error(await errorMessage(response, 'DeepSeek 请求失败'));
+        const data = await response.json();
+        loading.remove();
+        appendMessage('assistant', data.reply, data.tool_events || []);
+        const title = $('.ds-chat-topbar strong', deepseekWorkbench);
+        if (title) title.textContent = data.title;
+        const selectedTitle = $('.ds-session-item.active strong', deepseekWorkbench);
+        if (selectedTitle) selectedTitle.textContent = data.title;
+      } catch (error) {
+        loading.remove();
+        appendMessage('assistant', `请求失败：${error.message}`);
+      } finally {
+        textarea.disabled = false;
+        sendButton.disabled = false;
+        textarea.focus();
+      }
+    });
+    textarea?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        form?.requestSubmit();
+      }
+    });
+
+    const fileItemMarkup = (entry) => `<button type="button" class="ds-file-item" data-ds-file-type="${entry.type}" data-ds-file-path="${escapeHtml(entry.path)}"><span>${entry.type === 'directory' ? '▸' : '◇'}</span><span><strong>${escapeHtml(entry.name)}</strong><small>${entry.type === 'directory' ? '目录' : `${Math.max(1, Math.ceil((entry.size || 0) / 1024))} KB`}</small></span></button>`;
+    const bindFileItems = () => {
+      $$('[data-ds-file-path]', fileList).forEach((button) => button.addEventListener('click', async () => {
+        if (button.dataset.dsFileType === 'directory') {
+          await loadFiles(button.dataset.dsFilePath);
+          return;
+        }
+        const response = await fetch(`/api/deepseek-workbench/file?path=${encodeURIComponent(button.dataset.dsFilePath)}`);
+        if (!response.ok) {
+          window.alert(await errorMessage(response, '文件无法预览'));
+          return;
+        }
+        const data = await response.json();
+        $('[data-ds-preview-name]', preview).textContent = data.path;
+        $('[data-ds-preview-content]', preview).textContent = data.content;
+        preview.hidden = false;
+      }));
+    };
+    const loadFiles = async (path = '.') => {
+      if (!fileList) return;
+      const response = await fetch(`/api/deepseek-workbench/files?path=${encodeURIComponent(path)}`);
+      if (!response.ok) {
+        window.alert(await errorMessage(response, '目录读取失败'));
+        return;
+      }
+      const data = await response.json();
+      currentPath = path || '.';
+      pathLabel.textContent = currentPath;
+      backButton.disabled = currentPath === '.';
+      fileList.innerHTML = data.entries.length ? data.entries.map(fileItemMarkup).join('') : '<div class="ds-files-empty">这个目录是空的</div>';
+      bindFileItems();
+    };
+    bindFileItems();
+    backButton?.addEventListener('click', () => {
+      const parts = currentPath.split('/').filter((part) => part && part !== '.');
+      parts.pop();
+      loadFiles(parts.length ? parts.join('/') : '.');
+    });
+    $('[data-refresh-ds-files]', deepseekWorkbench)?.addEventListener('click', () => loadFiles(currentPath));
+    $('[data-close-ds-preview]', deepseekWorkbench)?.addEventListener('click', () => { preview.hidden = true; });
+    thread?.scrollTo({ top: thread.scrollHeight });
+  }
 
   function escapeHtml(value) {
     const element = document.createElement('span');

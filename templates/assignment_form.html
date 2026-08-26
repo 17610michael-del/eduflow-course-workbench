@@ -13,10 +13,26 @@
       <div class="form-group"><label for="due_date">截止日期</label><input id="due_date" type="datetime-local" name="due_date" value="{{ request.form.get('due_date', draft.data.due_date if draft else '') }}"></div>
       <div class="form-group"><label for="labels">标签</label><input id="labels" name="labels" placeholder="第3次作业, 算法" value="{{ request.form.get('labels', draft.data.labels if draft else '') }}"><small>多个标签使用英文逗号分隔</small></div>
     </div>
-    <fieldset class="form-group assignee-picker"><legend>指派学生</legend><div class="student-checks">
+    {% set selected_mode = request.form.get('assignment_mode', draft.data.assignment_mode if draft else 'individual') %}
+    <section class="assignment-mode-picker" data-assignment-mode-picker>
+      <div><strong>提交方式</strong><small>默认为个人作业，只有大作业需要合作时才开启分组模式。</small></div>
+      <div class="assignment-mode-options">
+        <label class="{{ 'active' if selected_mode != 'group' else '' }}"><input type="radio" name="assignment_mode" value="individual" {% if selected_mode != 'group' %}checked{% endif %}><span>个人</span><strong>个人作业</strong><small>每名学生独立提交、独立评分</small></label>
+        <label class="{{ 'active' if selected_mode == 'group' else '' }}"><input type="radio" name="assignment_mode" value="group" {% if selected_mode == 'group' %}checked{% endif %}><span>合作</span><strong>分组大作业</strong><small>组长提交，组员共享版本与成绩</small></label>
+      </div>
+    </section>
+    <div data-individual-assignees {% if selected_mode == 'group' %}hidden{% endif %}>
+    <fieldset class="form-group assignee-picker"><legend class="picker-legend"><span><strong>指派学生</strong><span class="picker-selection-tools"><em data-selection-count>已选 0/{{ students|length }}</em><button type="button" data-toggle-checks data-select-label="全选学生">全选学生</button></span></span></legend><div class="student-checks">
       {% for student in students %}<label><input type="checkbox" name="assignees" value="{{ student.username }}" {% if not draft or student.username in draft.data.get('assignees', []) %}checked{% endif %}><span class="avatar avatar-sm avatar-student">{{ student.display_name[0] }}</span><span><strong>{{ student.display_name }}</strong><small>@{{ student.username }}</small></span></label>{% else %}<p class="muted">尚无学生账号登录系统。可先创建任务，学生首次登录后再指派。</p>{% endfor %}
     </div></fieldset>
-    <fieldset class="form-group assignee-picker"><legend>指派老师 / 助教（负责审阅与评分）</legend><div class="student-checks">
+    </div>
+    <div data-group-assignees {% if selected_mode != 'group' %}hidden{% endif %}>
+      <fieldset class="form-group assignee-picker"><legend class="picker-legend"><span><strong>选择合作小组</strong><span class="picker-selection-tools"><em data-selection-count>已选 0/{{ groups|length }}</em><button type="button" data-toggle-checks data-select-label="全选小组">全选小组</button></span></span></legend><div class="student-checks group-assignment-checks">
+        {% set selected_groups = request.form.getlist('group_ids') if request.method == 'POST' else (draft.data.get('group_ids', []) if draft else []) %}
+        {% for group in groups %}<label><input type="checkbox" name="group_ids" value="{{ group.id }}" {% if group.id|string in selected_groups %}checked{% endif %}><span class="group-choice-icon">组</span><span><strong>{{ group.name }}</strong><small>组长 {{ group.leader_name }} · {{ group.member_count }} 人</small></span></label>{% else %}<div class="empty-state compact"><strong>还没有可用小组</strong><span>请先在“学习小组”页面创建小组。</span><a class="btn btn-secondary btn-sm" href="{{ url_for('groups_page') }}">去创建小组</a></div>{% endfor %}
+      </div></fieldset>
+    </div>
+    <fieldset class="form-group assignee-picker"><legend class="picker-legend"><span><strong>指派老师 / 助教（负责审阅与评分）</strong><span class="picker-selection-tools"><em data-selection-count>已选 0/{{ reviewers|length }}</em><button type="button" data-toggle-checks data-select-label="全选老师 / 助教">全选老师 / 助教</button></span></span></legend><div class="student-checks">
       {% for reviewer in reviewers %}<label><input type="checkbox" name="reviewers" value="{{ reviewer.username }}" {% if draft and reviewer.username in draft.data.get('reviewers', []) %}checked{% endif %}><span class="avatar avatar-sm avatar-{{ reviewer.role }}">{{ reviewer.display_name[0] }}</span><span><strong>{{ reviewer.display_name }}</strong><small>@{{ reviewer.username }} · {{ '老师' if reviewer.role == 'teacher' else '助教' }}</small></span></label>{% else %}<p class="muted">暂无老师或助教账号。任务创建者默认负责审阅。</p>{% endfor %}
     </div></fieldset>
     <div class="form-group"><label for="attachment">任务附件</label><label class="file-drop small"><input id="attachment" type="file" name="attachment" data-draft-file><span class="upload-icon">⇧</span><span><strong>{{ draft.file_name if draft and draft.file_name else '选择文件' }}</strong><small>PDF、Word、Excel、图片或压缩包，最大 20MB</small></span></label></div>

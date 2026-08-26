@@ -5,9 +5,10 @@ import os
 import shutil
 import sqlite3
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
+from urllib.parse import quote
 
 import bleach
 import pam
@@ -21,10 +22,21 @@ from flask_login import (
 from markdown import markdown
 from werkzeug.utils import secure_filename
 from subsystems.ai.services import (
-    DeepSeekError, assignment_assistant, enhance_learning_analysis,
-    extract_document_text, generate_questions, recognize_document_questions,
+    DeepSeekError, assignment_assistant, course_chat_assistant, deepseek_tool_chat, enhance_learning_analysis,
+    extract_document_text, generate_questions, knowledge_base_assistant, recognize_document_questions,
 )
 from subsystems.exams.services import attempt_deadline, normalize_questions
+from subsystems.knowledge.services import (
+    KNOWLEDGE_EXTENSIONS, chunk_knowledge_text, extract_knowledge_text, rank_knowledge_chunks,
+)
+from subsystems.projects.services import (
+    MAX_REPORT_BYTES, hash_agent_token, human_size, issue_agent_token, load_snapshot,
+    sanitize_agent_report,
+)
+from subsystems.deepseek_workbench.services import (
+    WORKBENCH_TOOLS, execute_workbench_tool, list_directory as workbench_list_directory,
+    read_file as workbench_read_file, tool_result_text, workspace_for_username,
+)
 
 from config import Config
 
@@ -182,7 +194,8 @@ def init_db(seed: bool = True):
             created_at TEXT NOT NULL,
             labels TEXT NOT NULL DEFAULT '[]',
             assignee_usernames TEXT NOT NULL DEFAULT '[]',
-            reviewer_usernames TEXT NOT NULL DEFAULT '[]'
+            reviewer_usernames TEXT NOT NULL DEFAULT '[]',
+            assignment_mode TEXT NOT NULL DEFAULT 'individual' CHECK(assignment_mode IN ('individual','group'))
         );
         CREATE TABLE IF NOT EXISTS discussions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,6 +211,7 @@ def init_db(seed: bool = True):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
             student_id INTEGER NOT NULL REFERENCES users(id),
+            group_id INTEGER REFERENCES study_groups(id) ON DELETE SET NULL,
             file_url TEXT NOT NULL,
             submitted_at TEXT NOT NULL,
             version INTEGER NOT NULL DEFAULT 1
@@ -223,6 +237,11 @@ def init_db(seed: bool = True):
             group_id INTEGER NOT NULL REFERENCES study_groups(id) ON DELETE CASCADE,
             user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
             PRIMARY KEY(group_id, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS assignment_groups (
+            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+            group_id INTEGER NOT NULL REFERENCES study_groups(id) ON DELETE CASCADE,
+            PRIMARY KEY(assignment_id, group_id)
         );
         CREATE TABLE IF NOT EXISTS exams (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -327,6 +346,79 @@ def init_db(seed: bool = True):
             reply TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS ai_chat_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            message TEXT NOT NULL,
+            reply TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS deepseek_workbench_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            title TEXT NOT NULL DEFAULT '新对话',
+            workspace_root TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS deepseek_workbench_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL REFERENCES deepseek_workbench_sessions(id) ON DELETE CASCADE,
+            role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+            content TEXT NOT NULL,
+            tool_events TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            original_name TEXT NOT NULL,
+            stored_path TEXT NOT NULL UNIQUE,
+            file_size INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'processing' CHECK(status IN ('processing','ready','failed')),
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            char_count INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT NOT NULL DEFAULT '',
+            created_by INTEGER NOT NULL REFERENCES users(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(document_id, chunk_index)
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_chat_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            viewer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            message TEXT NOT NULL,
+            reply TEXT NOT NULL,
+            sources TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS project_agents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,
+            workspace_root TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+            agent_version TEXT NOT NULL DEFAULT '',
+            hostname TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            last_seen_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS project_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL REFERENCES project_agents(id) ON DELETE CASCADE,
+            captured_at TEXT NOT NULL,
+            received_at TEXT NOT NULL,
+            payload TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS analysis_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
@@ -348,6 +440,14 @@ def init_db(seed: bool = True):
         CREATE INDEX IF NOT EXISTS idx_audit_assignment ON audit_logs(assignment_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_question_bank_status ON question_bank(status, created_at);
         CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_ai_chat_logs_user ON ai_chat_logs(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_deepseek_sessions_user ON deepseek_workbench_sessions(user_id, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_deepseek_messages_session ON deepseek_workbench_messages(session_id, id);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_documents_user ON knowledge_documents(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_user ON knowledge_chunks(user_id, document_id);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_chat_viewer ON knowledge_chat_logs(user_id, viewer_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_project_agents_user ON project_agents(user_id);
+        CREATE INDEX IF NOT EXISTS idx_project_snapshots_agent ON project_snapshots(agent_id, received_at);
         CREATE INDEX IF NOT EXISTS idx_course_events_time ON course_events(created_at);
         CREATE INDEX IF NOT EXISTS idx_failures_username ON login_failures(username, failed_at);
         """
@@ -356,6 +456,9 @@ def init_db(seed: bool = True):
     ensure_column("exams", "duration_minutes", "INTEGER NOT NULL DEFAULT 60")
     ensure_column("exams", "question_data", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column("assignments", "reviewer_usernames", "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column("assignments", "assignment_mode", "TEXT NOT NULL DEFAULT 'individual'")
+    ensure_column("submissions", "group_id", "INTEGER REFERENCES study_groups(id) ON DELETE SET NULL")
+    execute("CREATE INDEX IF NOT EXISTS idx_submissions_assignment_group ON submissions(assignment_id, group_id, version)")
     migrate_users_role_check()
     if seed and not query("SELECT id FROM users LIMIT 1", one=True):
         seed_db()
@@ -595,6 +698,11 @@ def date_cn(value):
     except ValueError: return value
 
 
+@app.template_filter("file_size")
+def file_size(value):
+    return human_size(value)
+
+
 @app.template_filter("markdown")
 def safe_markdown(value):
     rendered = markdown(value or "", extensions=["fenced_code", "tables", "sane_lists"])
@@ -610,7 +718,8 @@ def layout_data():
     if not current_user.is_authenticated:
         return {}
     data = {"nav_assignment_count": query("SELECT COUNT(*) AS n FROM assignments", one=True)["n"],
-            "nav_exam_count": query("SELECT COUNT(*) AS n FROM exams", one=True)["n"]}
+            "nav_exam_count": query("SELECT COUNT(*) AS n FROM exams", one=True)["n"],
+            "nav_project_count": query("SELECT COUNT(*) AS n FROM project_agents WHERE enabled=1", one=True)["n"]}
     if current_user.role == "teacher":
         data["nav_draft_count"] = query("SELECT COUNT(*) n FROM drafts WHERE user_id=? AND draft_type='assignment_new'",
                                         (current_user.id,), one=True)["n"]
@@ -631,6 +740,36 @@ def save_upload(file, category="general"):
     name = f"{uuid.uuid4().hex}.{suffix}"
     file.save(target_dir / name)
     return f"{category}/{name}"
+
+
+def knowledge_target(username=None):
+    if current_user.role == "student":
+        return query("SELECT * FROM users WHERE id=? AND role='student'", (current_user.id,), one=True)
+    if current_user.role not in ("teacher", "assistant"):
+        abort(403)
+    if username:
+        target = query("SELECT * FROM users WHERE username=? AND role='student'", (username,), one=True)
+        if not target:
+            abort(404)
+        return target
+    return query("SELECT * FROM users WHERE role='student' ORDER BY display_name COLLATE NOCASE,username LIMIT 1", one=True)
+
+
+def can_manage_knowledge(target) -> bool:
+    return bool(target and (current_user.role == "teacher" or current_user.id == target["id"]))
+
+
+def knowledge_document_for_access(document_id):
+    document = query(
+        """SELECT kd.*,u.username,u.display_name FROM knowledge_documents kd
+           JOIN users u ON u.id=kd.user_id WHERE kd.id=?""",
+        (document_id,), one=True,
+    )
+    if not document:
+        abort(404)
+    if current_user.role not in ("teacher", "assistant") and document["user_id"] != current_user.id:
+        abort(403)
+    return document
 
 
 def get_draft(draft_type, context_key):
@@ -725,7 +864,25 @@ def hydrate_assignment(row):
         item["reviewers"] = [dict(x) for x in query(f"SELECT * FROM users WHERE username IN ({marks})", tuple(item["reviewer_usernames"]))]
     else:
         item["reviewers"] = []
+    item["assignment_mode"] = item.get("assignment_mode") or "individual"
+    item["groups"] = [dict(x) for x in query(
+        """SELECT sg.*,u.display_name leader_name,u.username leader_username,
+           (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id=sg.id) member_count
+           FROM assignment_groups ag JOIN study_groups sg ON sg.id=ag.group_id
+           JOIN users u ON u.id=sg.leader_id WHERE ag.assignment_id=? ORDER BY sg.name""",
+        (item["id"],),
+    )]
     return item
+
+
+def assignment_group_for_student(assignment_id, student_id):
+    return query(
+        """SELECT sg.*,CASE WHEN sg.leader_id=? THEN 1 ELSE 0 END is_leader
+           FROM assignment_groups ag JOIN study_groups sg ON sg.id=ag.group_id
+           JOIN group_members gm ON gm.group_id=sg.id
+           WHERE ag.assignment_id=? AND gm.user_id=?""",
+        (student_id, assignment_id, student_id), one=True,
+    )
 
 
 def staff_scoped_sets():
@@ -763,7 +920,8 @@ def home():
     assignments = query(
         """SELECT a.*,u.display_name creator_name,
            (SELECT COUNT(*) FROM discussions d WHERE d.assignment_id=a.id AND d.kind='comment') comment_count,
-           (SELECT COUNT(DISTINCT student_id) FROM submissions s WHERE s.assignment_id=a.id) submitted_count
+           (SELECT COUNT(DISTINCT CASE WHEN s.group_id IS NOT NULL THEN 'g:'||s.group_id ELSE 'u:'||s.student_id END)
+            FROM submissions s WHERE s.assignment_id=a.id) submitted_count
            FROM assignments a JOIN users u ON u.id=a.created_by ORDER BY a.created_at DESC"""
     )
     discussion_activities = query(
@@ -805,7 +963,9 @@ def home():
         assigned = sum(current_user.username in json.loads(x["assignee_usernames"] or "[]") for x in assignments)
         published, review = 0, 0
         graded = 0
-        submitted = query("SELECT COUNT(DISTINCT assignment_id) n FROM submissions WHERE student_id=?", (current_user.id,), one=True)["n"]
+        submitted = query("""SELECT COUNT(DISTINCT s.assignment_id) n FROM submissions s
+                           LEFT JOIN group_members gm ON gm.group_id=s.group_id
+                           WHERE s.student_id=? OR gm.user_id=?""", (current_user.id, current_user.id), one=True)["n"]
         interactions = query("SELECT COUNT(*) n FROM discussions WHERE user_id=? AND kind='comment'", (current_user.id,), one=True)["n"]
         exam_total = query("SELECT COUNT(*) n FROM exams", one=True)["n"]
         exam_completed = query("SELECT COUNT(DISTINCT exam_id) n FROM exam_submissions WHERE student_id=?",
@@ -816,6 +976,396 @@ def home():
              "exam_total": exam_total, "exam_completed": exam_completed,
              "exam_percent": round(exam_completed / max(exam_total, 1) * 100)}
     return render_template("home.html", assignments=assignments, activities=activities, attention=attention, stats=stats)
+
+
+@app.get("/ai-chat")
+@login_required
+def ai_chat_page():
+    rows = query(
+        "SELECT * FROM ai_chat_logs WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT 40",
+        (current_user.id,),
+    )
+    return render_template(
+        "ai_chat.html",
+        chat_logs=list(reversed(rows)),
+        ai_enabled=bool(app.config.get("DEEPSEEK_API_KEY")),
+    )
+
+
+def deepseek_session_for_user(session_id):
+    return query(
+        "SELECT * FROM deepseek_workbench_sessions WHERE id=? AND user_id=?",
+        (session_id, current_user.id), one=True,
+    )
+
+
+def deepseek_workspace():
+    return workspace_for_username(app.config["WORKBENCH_WORKSPACE_BASE"], current_user.username)
+
+
+def deepseek_workspace_state():
+    root = deepseek_workspace()
+    available = root.is_dir() and os.access(root, os.R_OK | os.X_OK)
+    return root, available
+
+
+@app.get("/deepseek-workbench")
+@login_required
+def deepseek_workbench_page():
+    sessions = query(
+        "SELECT * FROM deepseek_workbench_sessions WHERE user_id=? ORDER BY updated_at DESC,id DESC",
+        (current_user.id,),
+    )
+    selected = None
+    requested_id = request.args.get("session", type=int)
+    if requested_id:
+        selected = deepseek_session_for_user(requested_id)
+        if not selected:
+            abort(404)
+    elif sessions:
+        selected = sessions[0]
+    messages = []
+    if selected:
+        for row in query(
+            "SELECT * FROM deepseek_workbench_messages WHERE session_id=? ORDER BY id",
+            (selected["id"],),
+        ):
+            item = dict(row)
+            try:
+                item["tool_events"] = json.loads(item["tool_events"] or "[]")
+            except json.JSONDecodeError:
+                item["tool_events"] = []
+            messages.append(item)
+    root, workspace_available = deepseek_workspace_state()
+    entries = []
+    if workspace_available:
+        try:
+            entries = workbench_list_directory(root, ".")
+        except (OSError, ValueError):
+            workspace_available = False
+    return render_template(
+        "deepseek_workbench.html", sessions=sessions, selected_session=selected,
+        messages=messages, workspace_root=str(root), workspace_available=workspace_available,
+        workspace_entries=entries, ai_enabled=bool(app.config.get("DEEPSEEK_API_KEY")),
+    )
+
+
+@app.post("/api/deepseek-workbench/sessions")
+@login_required
+def api_deepseek_session_create():
+    root, workspace_available = deepseek_workspace_state()
+    if not workspace_available:
+        return jsonify({"error": f"个人项目目录 {root} 不存在或不可读"}), 422
+    created = now_iso()
+    session_id = execute(
+        """INSERT INTO deepseek_workbench_sessions
+           (user_id,title,workspace_root,created_at,updated_at) VALUES (?,?,?,?,?)""",
+        (current_user.id, "新对话", str(root), created, created),
+    )
+    return jsonify({"id": session_id, "title": "新对话", "url": url_for("deepseek_workbench_page", session=session_id)}), 201
+
+
+@app.delete("/api/deepseek-workbench/sessions/<int:session_id>")
+@login_required
+def api_deepseek_session_delete(session_id):
+    if not deepseek_session_for_user(session_id):
+        return jsonify({"error": "对话不存在"}), 404
+    execute("DELETE FROM deepseek_workbench_sessions WHERE id=? AND user_id=?", (session_id, current_user.id))
+    return jsonify({"ok": True, "url": url_for("deepseek_workbench_page")})
+
+
+@app.get("/api/deepseek-workbench/files")
+@login_required
+def api_deepseek_files():
+    root, workspace_available = deepseek_workspace_state()
+    if not workspace_available:
+        return jsonify({"error": "个人项目目录不存在或不可读"}), 422
+    relative_path = request.args.get("path", ".")
+    try:
+        entries = workbench_list_directory(root, relative_path)
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"path": relative_path or ".", "entries": entries})
+
+
+@app.get("/api/deepseek-workbench/file")
+@login_required
+def api_deepseek_file():
+    root, workspace_available = deepseek_workspace_state()
+    if not workspace_available:
+        return jsonify({"error": "个人项目目录不存在或不可读"}), 422
+    relative_path = request.args.get("path", "")
+    try:
+        result = workbench_read_file(root, relative_path)
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)
+
+
+@app.post("/api/deepseek-workbench/sessions/<int:session_id>/messages")
+@login_required
+def api_deepseek_workbench_message(session_id):
+    workbench_session = deepseek_session_for_user(session_id)
+    if not workbench_session:
+        return jsonify({"error": "对话不存在"}), 404
+    root, workspace_available = deepseek_workspace_state()
+    if not workspace_available:
+        return jsonify({"error": "个人项目目录不存在或不可读"}), 422
+    data = request.get_json(silent=True) or {}
+    user_message = str(data.get("message") or "").strip()
+    if not user_message:
+        return jsonify({"error": "请输入消息"}), 400
+    if len(user_message) > 8000:
+        return jsonify({"error": "单条消息不能超过 8000 个字符"}), 400
+
+    history_rows = query(
+        """SELECT role,content FROM deepseek_workbench_messages
+           WHERE session_id=? ORDER BY id DESC LIMIT 20""",
+        (session_id,),
+    )
+    system_prompt = (
+        "你是 EduFlow 的 DeepSeek 项目工作台助手。当前工作区严格限定为当前登录用户的个人项目目录。"
+        "你可以使用工具列出目录、读取安全的文本/代码文件和搜索文本。"
+        "工具均为只读；不得声称已经修改、创建、删除文件或执行命令。"
+        "回答使用清晰简洁的中文；引用代码时说明相对路径和行号。"
+    )
+    messages = [{"role": "system", "content": system_prompt}]
+    for row in reversed(history_rows):
+        messages.append({"role": row["role"], "content": row["content"][:12000]})
+    messages.append({"role": "user", "content": user_message})
+    tool_events = []
+    final_reply = ""
+    try:
+        for _iteration in range(6):
+            assistant = deepseek_tool_chat(app.config, messages, WORKBENCH_TOOLS)
+            assistant_message = {
+                "role": "assistant",
+                "content": assistant.get("content"),
+            }
+            tool_calls = assistant.get("tool_calls") or []
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+            messages.append(assistant_message)
+            if not tool_calls:
+                final_reply = str(assistant.get("content") or "").strip()
+                break
+            for call in tool_calls[:8]:
+                function = call.get("function") or {}
+                tool_name = str(function.get("name") or "")
+                raw_arguments = function.get("arguments") or "{}"
+                try:
+                    arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+                    result = execute_workbench_tool(root, tool_name, arguments)
+                    output = tool_result_text(result)
+                    event = {"name": tool_name, "arguments": arguments, "ok": True}
+                except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+                    output = json.dumps({"error": str(exc)}, ensure_ascii=False)
+                    event = {"name": tool_name or "unknown", "ok": False, "error": str(exc)}
+                tool_events.append(event)
+                messages.append({
+                    "role": "tool", "tool_call_id": str(call.get("id") or ""),
+                    "content": output,
+                })
+        if not final_reply:
+            raise DeepSeekError("DeepSeek 工具调用次数过多，请缩小问题范围后重试")
+    except DeepSeekError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    created = now_iso()
+    db = get_db()
+    db.execute(
+        "INSERT INTO deepseek_workbench_messages(session_id,role,content,tool_events,created_at) VALUES (?,'user',?,'[]',?)",
+        (session_id, user_message, created),
+    )
+    db.execute(
+        "INSERT INTO deepseek_workbench_messages(session_id,role,content,tool_events,created_at) VALUES (?,'assistant',?,?,?)",
+        (session_id, final_reply, json.dumps(tool_events, ensure_ascii=False), created),
+    )
+    title = workbench_session["title"]
+    if title == "新对话":
+        title = user_message.replace("\n", " ")[:28] or "新对话"
+    db.execute(
+        "UPDATE deepseek_workbench_sessions SET title=?,workspace_root=?,updated_at=? WHERE id=? AND user_id=?",
+        (title, str(root), created, session_id, current_user.id),
+    )
+    db.commit()
+    return jsonify({"reply": final_reply, "tool_events": tool_events, "title": title, "generated_at": created})
+
+
+HAPI_SERVER_HOST = os.environ.get("HAPI_SERVER_HOST", "10.98.103.193")
+HAPI_PORT_BASE = int(os.environ.get("HAPI_PORT_BASE", "32000"))
+
+
+@app.get("/hapi/launch")
+@login_required
+def hapi_launch():
+    """跳转到当前 Linux 用户独立的 HAPI 工作台（原生 DeepSeek，不经其他代理）。"""
+    import socket
+
+    if pwd is None:
+        flash("HAPI 仅在内网 Linux 服务器上可用。", "warning")
+        return redirect(url_for("home"))
+    try:
+        linux_account = pwd.getpwnam(current_user.username)
+    except KeyError:
+        flash("当前账号没有对应的 Linux 用户，无法进入 HAPI。", "warning")
+        return redirect(url_for("home"))
+    linux_uid = linux_account.pw_uid
+    port = HAPI_PORT_BASE + linux_uid - 1000
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            pass
+    except OSError:
+        flash("HAPI 尚未为你的账号开通，请联系老师或管理员。", "warning")
+        return redirect(url_for("home"))
+    access_file = Path(linux_account.pw_dir) / ".config" / "eduflow-hapi" / "access.env"
+    try:
+        token = next(
+            line.split("=", 1)[1].strip()
+            for line in access_file.read_text(encoding="utf-8").splitlines()
+            if line.startswith("HAPI_HUB_TOKEN=")
+        )
+    except (OSError, StopIteration, IndexError):
+        flash("HAPI 登录凭据尚未生成，请联系老师或管理员。", "warning")
+        return redirect(url_for("home"))
+    if not token.startswith("ehh_") or len(token) < 40:
+        flash("HAPI 登录凭据格式异常，请联系管理员。", "warning")
+        return redirect(url_for("home"))
+    # Token 放在 URL fragment 中，不会发送到 Web 服务器或出现在访问日志里。
+    return redirect(f"http://{HAPI_SERVER_HOST}:{port}/#token={quote(token, safe='')}")
+
+
+@app.get("/knowledge")
+@login_required
+def knowledge_page():
+    target = knowledge_target(request.args.get("username"))
+    students = []
+    if current_user.role in ("teacher", "assistant"):
+        students = query(
+            "SELECT id,username,display_name FROM users WHERE role='student' "
+            "ORDER BY display_name COLLATE NOCASE,username COLLATE NOCASE"
+        )
+    documents = []
+    chat_logs = []
+    stats = {"documents": 0, "chunks": 0, "characters": 0}
+    if target:
+        documents = query(
+            """SELECT kd.*,u.display_name creator_name FROM knowledge_documents kd
+               JOIN users u ON u.id=kd.created_by WHERE kd.user_id=?
+               ORDER BY kd.created_at DESC,kd.id DESC""",
+            (target["id"],),
+        )
+        raw_logs = query(
+            """SELECT * FROM knowledge_chat_logs WHERE user_id=? AND viewer_id=?
+               ORDER BY created_at DESC,id DESC LIMIT 30""",
+            (target["id"], current_user.id),
+        )
+        for row in reversed(raw_logs):
+            item = dict(row)
+            try:
+                item["sources"] = json.loads(item["sources"] or "[]")
+            except json.JSONDecodeError:
+                item["sources"] = []
+            chat_logs.append(item)
+        stats = {
+            "documents": sum(1 for item in documents if item["status"] == "ready"),
+            "chunks": sum(int(item["chunk_count"] or 0) for item in documents),
+            "characters": sum(int(item["char_count"] or 0) for item in documents),
+        }
+    return render_template(
+        "knowledge.html", target=target, students=students, documents=documents,
+        chat_logs=chat_logs, stats=stats, can_manage=can_manage_knowledge(target),
+        ai_enabled=bool(app.config.get("DEEPSEEK_API_KEY")),
+    )
+
+
+@app.post("/knowledge/documents")
+@login_required
+def knowledge_document_upload():
+    target = knowledge_target(request.form.get("username"))
+    if not can_manage_knowledge(target):
+        abort(403)
+    uploaded = request.files.get("document")
+    if not uploaded or not uploaded.filename:
+        flash("请选择要加入知识库的文档。", "warning")
+        return redirect(url_for("knowledge_page", username=target["username"]))
+    original_name = Path(uploaded.filename).name.strip()[:255]
+    suffix = Path(original_name).suffix.lower().lstrip(".")
+    if suffix not in KNOWLEDGE_EXTENSIONS:
+        flash("知识库仅支持 PDF、DOCX、TXT 和 Markdown。", "danger")
+        return redirect(url_for("knowledge_page", username=target["username"]))
+    storage_dir = UPLOAD_DIR / "knowledge" / target["username"]
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}.{suffix}"
+    stored_file = storage_dir / stored_name
+    uploaded.save(stored_file)
+    relative_path = stored_file.relative_to(UPLOAD_DIR).as_posix()
+    stamp = now_iso()
+    db = get_db()
+    cursor = db.execute(
+        """INSERT INTO knowledge_documents
+           (user_id,original_name,stored_path,file_size,status,created_by,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (target["id"], original_name, relative_path, stored_file.stat().st_size,
+         "processing", current_user.id, stamp, stamp),
+    )
+    document_id = cursor.lastrowid
+    db.commit()
+    try:
+        text = extract_knowledge_text(stored_file)
+        chunks = chunk_knowledge_text(text)
+        if not chunks:
+            raise DeepSeekError("文档没有可建立索引的文字")
+        db.executemany(
+            """INSERT INTO knowledge_chunks(document_id,user_id,chunk_index,content,created_at)
+               VALUES (?,?,?,?,?)""",
+            [(document_id, target["id"], index, content, stamp) for index, content in enumerate(chunks)],
+        )
+        db.execute(
+            """UPDATE knowledge_documents SET status='ready',chunk_count=?,char_count=?,
+               error_message='',updated_at=? WHERE id=?""",
+            (len(chunks), len(text), now_iso(), document_id),
+        )
+        db.commit()
+        write_audit("create", "knowledge_document", document_id, student_id=target["id"],
+                    details={"filename": original_name, "chunks": len(chunks)})
+        flash(f"已建立索引：{original_name}（{len(chunks)} 个片段）", "success")
+    except (DeepSeekError, OSError, ValueError) as exc:
+        db.execute(
+            "UPDATE knowledge_documents SET status='failed',error_message=?,updated_at=? WHERE id=?",
+            (str(exc)[:500], now_iso(), document_id),
+        )
+        db.commit()
+        flash(f"文档索引失败：{exc}", "danger")
+    return redirect(url_for("knowledge_page", username=target["username"]))
+
+
+@app.get("/knowledge/documents/<int:document_id>/download")
+@login_required
+def knowledge_document_download(document_id):
+    document = knowledge_document_for_access(document_id)
+    return send_from_directory(
+        UPLOAD_DIR, document["stored_path"], as_attachment=True,
+        download_name=document["original_name"],
+    )
+
+
+@app.post("/knowledge/documents/<int:document_id>/delete")
+@login_required
+def knowledge_document_delete(document_id):
+    document = knowledge_document_for_access(document_id)
+    target = query("SELECT * FROM users WHERE id=?", (document["user_id"],), one=True)
+    if not can_manage_knowledge(target):
+        abort(403)
+    stored_file = (UPLOAD_DIR / document["stored_path"]).resolve()
+    knowledge_root = (UPLOAD_DIR / "knowledge").resolve()
+    if knowledge_root in stored_file.parents and stored_file.is_file():
+        stored_file.unlink()
+    execute("DELETE FROM knowledge_documents WHERE id=?", (document_id,))
+    write_audit("delete", "knowledge_document", document_id, student_id=document["user_id"],
+                details={"filename": document["original_name"]})
+    flash(f"已删除知识库文档：{document['original_name']}", "success")
+    return redirect(url_for("knowledge_page", username=target["username"]))
 
 
 @app.get("/assignments")
@@ -831,12 +1381,16 @@ def assignments_page():
     rows = query(
         f"""SELECT a.*,u.display_name creator_name,
         (SELECT COUNT(*) FROM discussions d WHERE d.assignment_id=a.id AND d.kind='comment') comment_count,
-        (SELECT COUNT(DISTINCT student_id) FROM submissions s WHERE s.assignment_id=a.id) submitted_count
+        (SELECT COUNT(DISTINCT CASE WHEN s.group_id IS NOT NULL THEN 'g:'||s.group_id ELSE 'u:'||s.student_id END)
+         FROM submissions s WHERE s.assignment_id=a.id) submitted_count
         FROM assignments a JOIN users u ON u.id=a.created_by {where} ORDER BY {order}""", params)
     assignments = []
     for row in rows:
         item = dict(row); item["labels_list"] = json.loads(item["labels"] or "[]")
-        item["assignee_count"] = len(json.loads(item["assignee_usernames"] or "[]")); assignments.append(item)
+        item["assignee_count"] = len(json.loads(item["assignee_usernames"] or "[]"))
+        item["group_count"] = query("SELECT COUNT(*) n FROM assignment_groups WHERE assignment_id=?", (item["id"],), one=True)["n"]
+        item["target_count"] = item["group_count"] if item.get("assignment_mode") == "group" else item["assignee_count"]
+        assignments.append(item)
     all_assignments = list(assignments)
     total_count = len(all_assignments)
     submitted_ids = set()
@@ -857,7 +1411,10 @@ def assignments_page():
     else:
         if view not in {"all", "completed", "assigned", "submitted", "interactions"}: view = "all"
         view_names.update({"assigned": "指派给我", "submitted": "我的提交", "interactions": "我的互动"})
-        submitted_ids = {x["assignment_id"] for x in query("SELECT DISTINCT assignment_id FROM submissions WHERE student_id=?", (current_user.id,))}
+        submitted_ids = {x["assignment_id"] for x in query(
+            """SELECT DISTINCT s.assignment_id FROM submissions s
+               LEFT JOIN group_members gm ON gm.group_id=s.group_id
+               WHERE s.student_id=? OR gm.user_id=?""", (current_user.id, current_user.id))}
         interaction_ids = {x["assignment_id"] for x in query("SELECT DISTINCT assignment_id FROM discussions WHERE user_id=? AND kind='comment'", (current_user.id,))}
         if view in {"completed", "submitted"}: assignments = [x for x in assignments if x["id"] in submitted_ids]
         elif view == "assigned": assignments = [x for x in assignments if current_user.username in json.loads(x["assignee_usernames"] or "[]")]
@@ -874,31 +1431,54 @@ def assignments_page():
 def assignment_new():
     students = query("SELECT * FROM users WHERE role='student' ORDER BY display_name")
     reviewers = query("SELECT * FROM users WHERE role IN ('teacher','assistant') ORDER BY CASE role WHEN 'teacher' THEN 0 ELSE 1 END, display_name")
+    groups = query("""SELECT sg.*,u.display_name leader_name,u.username leader_username,
+                    (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id=sg.id) member_count
+                    FROM study_groups sg JOIN users u ON u.id=sg.leader_id ORDER BY sg.name""")
     draft_key = request.args.get("draft", "").strip() or request.form.get("draft_key", "").strip() or uuid.uuid4().hex
     draft = get_draft("assignment_new", draft_key)
     if request.method == "POST":
         title = request.form.get("title", "").strip(); description = request.form.get("description", "").strip()
         if not title or not description:
             flash("标题和任务说明不能为空。", "danger")
-            return render_template("assignment_form.html", students=students, reviewers=reviewers, draft=draft, draft_key=draft_key)
+            return render_template("assignment_form.html", students=students, reviewers=reviewers, groups=groups, draft=draft, draft_key=draft_key)
         try: attachment = save_upload(request.files.get("attachment"), "tasks") or (draft["file_url"] if draft else None)
         except ValueError as exc:
-            flash(str(exc), "danger"); return render_template("assignment_form.html", students=students, reviewers=reviewers, draft=draft, draft_key=draft_key)
+            flash(str(exc), "danger"); return render_template("assignment_form.html", students=students, reviewers=reviewers, groups=groups, draft=draft, draft_key=draft_key)
         labels = [x.strip() for x in request.form.get("labels", "").split(",") if x.strip()]
-        assignees = request.form.getlist("assignees")
+        assignment_mode = request.form.get("assignment_mode", "individual")
+        assignment_mode = assignment_mode if assignment_mode in {"individual", "group"} else "individual"
+        selected_group_ids = {int(x) for x in request.form.getlist("group_ids") if x.isdigit()}
+        valid_group_ids = {row["id"] for row in groups}
+        if assignment_mode == "group":
+            selected_group_ids &= valid_group_ids
+            if not selected_group_ids:
+                flash("分组大作业至少需要选择一个已有小组。", "danger")
+                return render_template("assignment_form.html", students=students, reviewers=reviewers, groups=groups, draft=draft, draft_key=draft_key)
+            marks = ",".join("?" for _ in selected_group_ids)
+            assignees = [row["username"] for row in query(
+                f"""SELECT DISTINCT u.username FROM group_members gm JOIN users u ON u.id=gm.user_id
+                    WHERE gm.group_id IN ({marks}) ORDER BY u.username""", tuple(sorted(selected_group_ids)))]
+        else:
+            selected_group_ids = set()
+            assignees = request.form.getlist("assignees")
         reviewers_usernames = request.form.getlist("reviewers")
         assignment_id = execute(
-            """INSERT INTO assignments(title,description,due_date,attachment_url,created_by,status,created_at,labels,assignee_usernames,reviewer_usernames)
-               VALUES (?,?,?,?,?,'open',?,?,?,?)""",
+            """INSERT INTO assignments(title,description,due_date,attachment_url,created_by,status,created_at,labels,assignee_usernames,reviewer_usernames,assignment_mode)
+               VALUES (?,?,?,?,?,'open',?,?,?,?,?)""",
             (title, description, request.form.get("due_date") or None, attachment, current_user.id, now_iso(),
-             json.dumps(labels, ensure_ascii=False), json.dumps(assignees), json.dumps(reviewers_usernames)),
+             json.dumps(labels, ensure_ascii=False), json.dumps(assignees), json.dumps(reviewers_usernames), assignment_mode),
         )
+        for group_id in sorted(selected_group_ids):
+            execute("INSERT INTO assignment_groups(assignment_id,group_id) VALUES (?,?)", (assignment_id, group_id))
         execute("INSERT INTO discussions(assignment_id,user_id,content,kind,created_at) VALUES (?,?,?,'system',?)",
-                (assignment_id, current_user.id, f"{current_user.name} 创建任务并指派给 {len(assignees)} 位学生", now_iso()))
+                (assignment_id, current_user.id,
+                 f"{current_user.name} 创建{'分组大作业' if assignment_mode == 'group' else '个人任务'}并指派给 "
+                 f"{len(selected_group_ids)} 个小组" if assignment_mode == "group" else
+                 f"{current_user.name} 创建个人任务并指派给 {len(assignees)} 位学生", now_iso()))
         delete_draft("assignment_new", draft_key)
-        flash("任务已创建。", "success")
+        flash("分组大作业已创建。" if assignment_mode == "group" else "个人任务已创建。", "success")
         return redirect(url_for("assignment_detail", assignment_id=assignment_id))
-    return render_template("assignment_form.html", students=students, reviewers=reviewers, draft=draft, draft_key=draft_key)
+    return render_template("assignment_form.html", students=students, reviewers=reviewers, groups=groups, draft=draft, draft_key=draft_key)
 
 
 @app.get("/assignment-drafts")
@@ -931,7 +1511,8 @@ def delete_assignment_draft(context_key):
 def assignment_detail(assignment_id):
     assignment = hydrate_assignment(query(
         """SELECT a.*,u.display_name creator_name,
-        (SELECT COUNT(DISTINCT student_id) FROM submissions s WHERE s.assignment_id=a.id) submitted_count
+        (SELECT COUNT(DISTINCT CASE WHEN s.group_id IS NOT NULL THEN 'g:'||s.group_id ELSE 'u:'||s.student_id END)
+         FROM submissions s WHERE s.assignment_id=a.id) submitted_count
         FROM assignments a JOIN users u ON u.id=a.created_by WHERE a.id=?""", (assignment_id,), one=True))
     if not assignment: abort(404)
     rows = query("""SELECT d.*,u.display_name user_name,u.username,u.role user_role FROM discussions d
@@ -943,27 +1524,48 @@ def assignment_detail(assignment_id):
         else: roots.append(item)
     participants = query("""SELECT DISTINCT u.id,u.username,u.display_name,u.role FROM users u
                           JOIN discussions d ON d.user_id=u.id WHERE d.assignment_id=?""", (assignment_id,))
-    submissions = query("""SELECT s.*,u.display_name name,u.username FROM submissions s
-                         JOIN users u ON u.id=s.student_id WHERE s.assignment_id=? ORDER BY s.submitted_at DESC""", (assignment_id,))
-    latest_submissions = query("""SELECT s.*,u.display_name name,u.username,
-                                g.score,g.feedback,g.graded_at
-                         FROM submissions s
-                         JOIN users u ON u.id=s.student_id
-                         LEFT JOIN grades g ON g.assignment_id=s.assignment_id AND g.student_id=s.student_id
-                         WHERE s.assignment_id=? AND s.version=(
-                           SELECT MAX(s2.version) FROM submissions s2
-                           WHERE s2.assignment_id=s.assignment_id AND s2.student_id=s.student_id
-                         ) ORDER BY s.submitted_at DESC""", (assignment_id,))
+    submissions = query("""SELECT s.*,u.display_name name,u.username,sg.name group_name
+                         FROM submissions s JOIN users u ON u.id=s.student_id
+                         LEFT JOIN study_groups sg ON sg.id=s.group_id
+                         WHERE s.assignment_id=? ORDER BY s.submitted_at DESC""", (assignment_id,))
+    if assignment["assignment_mode"] == "group":
+        latest_submissions = query("""SELECT s.*,u.display_name name,u.username,sg.name group_name,
+                                    g.score,g.feedback,g.graded_at
+                             FROM submissions s JOIN users u ON u.id=s.student_id
+                             JOIN study_groups sg ON sg.id=s.group_id
+                             LEFT JOIN grades g ON g.assignment_id=s.assignment_id AND g.student_id=sg.leader_id
+                             WHERE s.assignment_id=? AND s.version=(
+                               SELECT MAX(s2.version) FROM submissions s2
+                               WHERE s2.assignment_id=s.assignment_id AND s2.group_id=s.group_id
+                             ) ORDER BY sg.name""", (assignment_id,))
+    else:
+        latest_submissions = query("""SELECT s.*,u.display_name name,u.username,NULL group_name,
+                                    g.score,g.feedback,g.graded_at
+                             FROM submissions s JOIN users u ON u.id=s.student_id
+                             LEFT JOIN grades g ON g.assignment_id=s.assignment_id AND g.student_id=s.student_id
+                             WHERE s.assignment_id=? AND s.group_id IS NULL AND s.version=(
+                               SELECT MAX(s2.version) FROM submissions s2
+                               WHERE s2.assignment_id=s.assignment_id AND s2.student_id=s.student_id AND s2.group_id IS NULL
+                             ) ORDER BY s.submitted_at DESC""", (assignment_id,))
     chat_logs = query("SELECT * FROM chat_logs WHERE assignment_id=? AND user_id=? ORDER BY created_at DESC LIMIT 10",
                       (assignment_id, current_user.id))
     server_files = available_server_files(current_user.username) if current_user.role == "student" else []
-    my_submissions = [x for x in submissions if x["student_id"] == current_user.id]
+    user_assignment_group = assignment_group_for_student(assignment_id, current_user.id) if current_user.role == "student" and assignment["assignment_mode"] == "group" else None
+    if assignment["assignment_mode"] == "group":
+        my_submissions = [x for x in submissions if user_assignment_group and x["group_id"] == user_assignment_group["id"]]
+        can_submit = bool(user_assignment_group and user_assignment_group["is_leader"])
+        assignment["target_count"] = len(assignment["groups"])
+    else:
+        my_submissions = [x for x in submissions if x["student_id"] == current_user.id and x["group_id"] is None]
+        can_submit = current_user.role == "student"
+        assignment["target_count"] = len(assignment["assignees"])
     my_grade = query("SELECT * FROM grades WHERE assignment_id=? AND student_id=?",
                      (assignment_id, current_user.id), one=True) if current_user.role == "student" else None
     submission_draft = get_draft("assignment_submission", assignment_id) if current_user.role == "student" else None
     return render_template("assignment_detail.html", assignment=assignment, discussions=roots, replies=replies,
                            participants=participants, submissions=submissions, latest_submissions=latest_submissions,
                            my_submissions=my_submissions, my_grade=my_grade,
+                           user_assignment_group=user_assignment_group, can_submit=can_submit,
                            submission_draft=submission_draft,
                            server_files=server_files, server_submission_path=str(SERVER_SUBMISSION_ROOT / current_user.username),
                            chat_logs=list(reversed(chat_logs)))
@@ -989,10 +1591,16 @@ def add_comment(assignment_id):
     execute("INSERT INTO discussions(assignment_id,user_id,parent_id,content,attachment_url,created_at) VALUES (?,?,?,?,?,?)",
             (assignment_id, current_user.id, parent_id, content or "提交了一个附件", attachment, now_iso()))
     if attachment and current_user.role == "student":
-        version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND student_id=?",
-                        (assignment_id, current_user.id), one=True)["n"]
-        execute("INSERT INTO submissions(assignment_id,student_id,file_url,submitted_at,version) VALUES (?,?,?,?,?)",
-                (assignment_id, current_user.id, attachment, now_iso(), version))
+        group = assignment_group_for_student(assignment_id, current_user.id) if assignment["assignment_mode"] == "group" else None
+        if assignment["assignment_mode"] != "group" or (group and group["is_leader"]):
+            if group:
+                version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND group_id=?",
+                                (assignment_id, group["id"]), one=True)["n"]
+            else:
+                version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND student_id=? AND group_id IS NULL",
+                                (assignment_id, current_user.id), one=True)["n"]
+            execute("INSERT INTO submissions(assignment_id,student_id,group_id,file_url,submitted_at,version) VALUES (?,?,?,?,?,?)",
+                    (assignment_id, current_user.id, group["id"] if group else None, attachment, now_iso(), version))
     flash("评论已发布。", "success")
     return redirect(url_for("assignment_detail", assignment_id=assignment_id) + "#activity")
 
@@ -1008,6 +1616,14 @@ def submit_assignment(assignment_id):
     if assignment["status"] == "closed":
         flash("任务已关闭，不能继续提交。", "warning")
         return redirect(url_for("assignment_detail", assignment_id=assignment_id))
+    submission_group = None
+    if assignment["assignment_mode"] == "group":
+        submission_group = assignment_group_for_student(assignment_id, current_user.id)
+        if not submission_group:
+            abort(403)
+        if not submission_group["is_leader"]:
+            flash("分组大作业由组长代表小组提交最终版本。", "warning")
+            return redirect(url_for("assignment_detail", assignment_id=assignment_id) + "#activity")
     submission_draft = get_draft("assignment_submission", assignment_id)
     source = request.form.get("source", "local")
     original_name = ""
@@ -1026,13 +1642,19 @@ def submit_assignment(assignment_id):
     except ValueError as exc:
         flash(str(exc), "danger")
         return redirect(url_for("assignment_detail", assignment_id=assignment_id) + "#activity")
-    version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND student_id=?",
-                    (assignment_id, current_user.id), one=True)["n"]
-    execute("INSERT INTO submissions(assignment_id,student_id,file_url,submitted_at,version) VALUES (?,?,?,?,?)",
-            (assignment_id, current_user.id, stored_name, now_iso(), version))
+    if submission_group:
+        version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND group_id=?",
+                        (assignment_id, submission_group["id"]), one=True)["n"]
+    else:
+        version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND student_id=? AND group_id IS NULL",
+                        (assignment_id, current_user.id), one=True)["n"]
+    execute("INSERT INTO submissions(assignment_id,student_id,group_id,file_url,submitted_at,version) VALUES (?,?,?,?,?,?)",
+            (assignment_id, current_user.id, submission_group["id"] if submission_group else None, stored_name, now_iso(), version))
     execute("""INSERT INTO discussions(assignment_id,user_id,content,kind,attachment_url,created_at)
                VALUES (?,?,?,'system',?,?)""",
-            (assignment_id, current_user.id, f"{current_user.name} 提交了作业 {original_name}（v{version}）",
+            (assignment_id, current_user.id,
+             f"{current_user.name} 代表 {submission_group['name']} 提交了作业 {original_name}（v{version}）" if submission_group else
+             f"{current_user.name} 提交了作业 {original_name}（v{version}）",
              stored_name, now_iso()))
     delete_draft("assignment_submission", assignment_id)
     flash(f"作业提交成功，当前版本 v{version}。", "success")
@@ -1042,9 +1664,9 @@ def submit_assignment(assignment_id):
 @app.post("/assignments/<int:assignment_id>/grades/<int:student_id>")
 @staff_required
 def grade_assignment(assignment_id, student_id):
-    assignment = query("SELECT id FROM assignments WHERE id=?", (assignment_id,), one=True)
+    assignment = query("SELECT id,assignment_mode FROM assignments WHERE id=?", (assignment_id,), one=True)
     student = query("SELECT id FROM users WHERE id=? AND role='student'", (student_id,), one=True)
-    submission = query("SELECT id FROM submissions WHERE assignment_id=? AND student_id=? LIMIT 1",
+    submission = query("SELECT id,group_id FROM submissions WHERE assignment_id=? AND student_id=? ORDER BY version DESC LIMIT 1",
                        (assignment_id, student_id), one=True)
     if not assignment or not student or not submission:
         abort(404)
@@ -1056,13 +1678,22 @@ def grade_assignment(assignment_id, student_id):
     if len(feedback) > 2000:
         flash("教师评语不能超过 2000 个字符。", "danger")
         return redirect(url_for("assignment_detail", assignment_id=assignment_id) + "#grading")
-    execute("""INSERT INTO grades(assignment_id,student_id,score,feedback,graded_by,graded_at)
-               VALUES (?,?,?,?,?,?)
-               ON CONFLICT(assignment_id,student_id) DO UPDATE SET
-                 score=excluded.score,feedback=excluded.feedback,
-                 graded_by=excluded.graded_by,graded_at=excluded.graded_at""",
-            (assignment_id, student_id, score, feedback, current_user.id, now_iso()))
-    flash(f"评分已保存：{score} 分。", "success")
+    grade_targets = [student_id]
+    group_name = None
+    if assignment["assignment_mode"] == "group" and submission["group_id"]:
+        grade_targets = [row["user_id"] for row in query(
+            "SELECT user_id FROM group_members WHERE group_id=?", (submission["group_id"],))]
+        group = query("SELECT name FROM study_groups WHERE id=?", (submission["group_id"],), one=True)
+        group_name = group["name"] if group else None
+    graded_at = now_iso()
+    for target_id in grade_targets:
+        execute("""INSERT INTO grades(assignment_id,student_id,score,feedback,graded_by,graded_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(assignment_id,student_id) DO UPDATE SET
+                     score=excluded.score,feedback=excluded.feedback,
+                     graded_by=excluded.graded_by,graded_at=excluded.graded_at""",
+                (assignment_id, target_id, score, feedback, current_user.id, graded_at))
+    flash(f"{group_name + ' 小组' if group_name else '作业'}评分已保存：{score} 分。", "success")
     return redirect(url_for("assignment_detail", assignment_id=assignment_id) + "#grading")
 
 
@@ -1142,6 +1773,127 @@ def analytics_page():
     else:
         students = query("SELECT * FROM users WHERE id=?", (current_user.id,))
     return render_template("analytics.html", students=students)
+
+
+@app.get("/users")
+@login_required
+def users_page():
+    users = query(
+        """SELECT u.id,u.username,u.display_name,u.role,u.created_at,u.last_login_at,
+        sg.name group_name,CASE WHEN sg.leader_id=u.id THEN 1 ELSE 0 END is_group_leader,
+        (SELECT COUNT(*) FROM assignments a WHERE a.created_by=u.id) assignment_created_count,
+        (SELECT COUNT(*) FROM exams e WHERE e.created_by=u.id) exam_created_count,
+        (SELECT COUNT(*) FROM discussions d WHERE d.user_id=u.id AND d.kind='comment') discussion_count,
+        (SELECT COUNT(*) FROM submissions s WHERE s.student_id=u.id) submission_count,
+        (SELECT COUNT(*) FROM exam_submissions es WHERE es.student_id=u.id) exam_submission_count,
+        ((SELECT COUNT(*) FROM grades g WHERE g.graded_by=u.id) +
+         (SELECT COUNT(*) FROM exam_grades eg WHERE eg.graded_by=u.id)) graded_count
+        FROM users u
+        LEFT JOIN group_members gm ON gm.user_id=u.id
+        LEFT JOIN study_groups sg ON sg.id=gm.group_id
+        ORDER BY CASE u.role WHEN 'teacher' THEN 0 WHEN 'assistant' THEN 1 ELSE 2 END,
+        u.display_name COLLATE NOCASE,u.username COLLATE NOCASE"""
+    )
+    role_meta = {
+        "teacher": {"label": "老师", "description": "负责课程、任务与考试管理"},
+        "assistant": {"label": "助教", "description": "协助审阅、评分与课程答疑"},
+        "student": {"label": "学生", "description": "参与任务、考试与学习小组"},
+    }
+    grouped_users = []
+    counts = {role: 0 for role in role_meta}
+    for role, meta in role_meta.items():
+        members = []
+        for row in users:
+            if row["role"] != role:
+                continue
+            item = dict(row)
+            if role == "teacher":
+                item["activity_summary"] = (
+                    f"发布 {item['assignment_created_count']} 项任务 · {item['exam_created_count']} 场考试"
+                )
+            elif role == "assistant":
+                item["activity_summary"] = (
+                    f"完成 {item['graded_count']} 次评分 · {item['discussion_count']} 条互动"
+                )
+            else:
+                item["activity_summary"] = (
+                    f"提交 {item['submission_count']} 份作业 · {item['exam_submission_count']} 场考试"
+                )
+            members.append(item)
+        counts[role] = len(members)
+        grouped_users.append({"role": role, "members": members, **meta})
+    return render_template(
+        "users.html", users=users, grouped_users=grouped_users, counts=counts
+    )
+
+
+def _project_time(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+@app.get("/projects")
+@login_required
+def projects_page():
+    if current_user.role in ("teacher", "assistant"):
+        where, params = "u.role='student'", ()
+    else:
+        where, params = "u.id=? AND u.role='student'", (current_user.id,)
+    rows = query(
+        f"""SELECT u.id user_id,u.username,u.display_name,
+        pa.id agent_id,pa.workspace_root,pa.enabled,pa.agent_version,pa.hostname,
+        pa.created_at agent_created_at,pa.last_seen_at,
+        ps.captured_at,ps.received_at,ps.payload
+        FROM users u
+        LEFT JOIN project_agents pa ON pa.user_id=u.id
+        LEFT JOIN project_snapshots ps ON ps.id=(
+            SELECT id FROM project_snapshots latest
+            WHERE latest.agent_id=pa.id ORDER BY latest.received_at DESC,latest.id DESC LIMIT 1
+        )
+        WHERE {where}
+        ORDER BY u.display_name COLLATE NOCASE,u.username COLLATE NOCASE""",
+        params,
+    )
+    now_utc = datetime.now(timezone.utc)
+    students = []
+    totals = {"students": len(rows), "online": 0, "projects": 0, "alerts": 0}
+    for row in rows:
+        item = dict(row)
+        payload = load_snapshot(item.pop("payload", None))
+        seen = _project_time(item.get("last_seen_at"))
+        item["online"] = bool(item.get("enabled") and seen and (now_utc - seen).total_seconds() <= 180)
+        item["configured"] = bool(item.get("agent_id"))
+        item["has_report"] = bool(item.get("received_at"))
+        item["disk"] = payload.get("disk") or {}
+        disk_total = int(item["disk"].get("total") or 0)
+        item["disk_percent"] = round(int(item["disk"].get("used") or 0) / max(disk_total, 1) * 100)
+        item["projects"] = []
+        for project in payload.get("projects") or []:
+            if not isinstance(project, dict):
+                continue
+            project = dict(project)
+            modified = _project_time(project.get("last_modified"))
+            age_days = (now_utc - modified).days if modified else None
+            project["age_days"] = age_days
+            project["stale"] = age_days is not None and age_days >= 14
+            project["git"] = project.get("git") or {}
+            project["manifest"] = project.get("manifest") or {}
+            project["progress"] = int(project["manifest"].get("progress") or 0)
+            item["projects"].append(project)
+            if project["stale"] or int(project["git"].get("changed_files") or 0) > 0:
+                totals["alerts"] += 1
+        item["process_count"] = len(payload.get("processes") or [])
+        totals["projects"] += len(item["projects"])
+        totals["online"] += int(item["online"])
+        students.append(item)
+    return render_template("projects.html", students=students, totals=totals)
 
 
 @app.get("/students")
@@ -1644,8 +2396,10 @@ def draft_api(draft_type, context_key):
 def analysis_for(user):
     activity = query("""SELECT
         (SELECT COUNT(*) FROM discussions WHERE user_id=? AND kind='comment') question_count,
-        (SELECT COUNT(DISTINCT assignment_id) FROM submissions WHERE student_id=?) submitted_tasks,
-        (SELECT COUNT(*) FROM assignments) total_tasks""", (user["id"], user["id"]), one=True)
+        (SELECT COUNT(DISTINCT s.assignment_id) FROM submissions s
+         LEFT JOIN group_members gm ON gm.group_id=s.group_id
+         WHERE s.student_id=? OR gm.user_id=?) submitted_tasks,
+        (SELECT COUNT(*) FROM assignments) total_tasks""", (user["id"], user["id"], user["id"]), one=True)
     engagement = "active" if activity["question_count"] >= 2 else "normal"
     ratio = activity["submitted_tasks"] / max(activity["total_tasks"], 1)
     return {"username": user["username"], "name": user["display_name"],
@@ -1715,9 +2469,23 @@ def api_assignments():
 def api_assignment_create():
     data = request.get_json(silent=True) or {}
     if not data.get("title") or not data.get("description"): return jsonify({"error": "required_fields"}), 400
-    assignment_id = execute("""INSERT INTO assignments(title,description,due_date,created_by,status,created_at,labels,assignee_usernames)
-        VALUES (?,?,?,?,'open',?,?,?)""", (data["title"], data["description"], data.get("due_date"), current_user.id,
-        now_iso(), json.dumps(data.get("labels", []), ensure_ascii=False), json.dumps(data.get("assignees", []))))
+    assignment_mode = "group" if data.get("assignment_mode") == "group" else "individual"
+    group_ids = {int(x) for x in data.get("group_ids", []) if str(x).isdigit()} if isinstance(data.get("group_ids", []), list) else set()
+    if assignment_mode == "group":
+        valid_ids = {row["id"] for row in query("SELECT id FROM study_groups")}
+        group_ids &= valid_ids
+        if not group_ids: return jsonify({"error": "group_required"}), 400
+        marks = ",".join("?" for _ in group_ids)
+        assignees = [row["username"] for row in query(
+            f"""SELECT DISTINCT u.username FROM group_members gm JOIN users u ON u.id=gm.user_id
+                WHERE gm.group_id IN ({marks})""", tuple(sorted(group_ids)))]
+    else:
+        assignees = data.get("assignees", [])
+    assignment_id = execute("""INSERT INTO assignments(title,description,due_date,created_by,status,created_at,labels,assignee_usernames,assignment_mode)
+        VALUES (?,?,?,?,'open',?,?,?,?)""", (data["title"], data["description"], data.get("due_date"), current_user.id,
+        now_iso(), json.dumps(data.get("labels", []), ensure_ascii=False), json.dumps(assignees), assignment_mode))
+    for group_id in sorted(group_ids):
+        execute("INSERT INTO assignment_groups(assignment_id,group_id) VALUES (?,?)", (assignment_id, group_id))
     return jsonify({"id": assignment_id}), 201
 
 
@@ -1764,20 +2532,225 @@ def api_assignment_chat(assignment_id):
     generated = now_iso()
     execute("INSERT INTO chat_logs(assignment_id,user_id,message,reply,created_at) VALUES (?,?,?,?,?)",
             (assignment_id, current_user.id, message, reply, generated))
+    return jsonify({"reply": reply, "generated_at": generated,
+                    "provider": "deepseek", "direct_api": True})
+
+
+@app.post("/api/ai-chat")
+@login_required
+def api_ai_chat():
+    data = request.get_json(silent=True) or {}
+    message = str(data.get("message", "")).strip()
+    if not message:
+        return jsonify({"error": "请输入消息"}), 400
+    if len(message) > 6000:
+        return jsonify({"error": "单条消息不能超过 6000 个字符"}), 400
+    rows = query(
+        "SELECT message,reply FROM ai_chat_logs WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT 8",
+        (current_user.id,),
+    )
+    history = []
+    for row in reversed(rows):
+        history.extend((
+            {"role": "user", "content": row["message"]},
+            {"role": "assistant", "content": row["reply"]},
+        ))
+    try:
+        reply = course_chat_assistant(app.config, message, history)
+    except DeepSeekError as exc:
+        return jsonify({"error": str(exc)}), 502
+    generated = now_iso()
+    execute(
+        "INSERT INTO ai_chat_logs(user_id,message,reply,created_at) VALUES (?,?,?,?)",
+        (current_user.id, message, reply, generated),
+    )
     return jsonify({"reply": reply, "generated_at": generated})
+
+
+@app.post("/api/ai-chat/clear")
+@login_required
+def api_ai_chat_clear():
+    execute("DELETE FROM ai_chat_logs WHERE user_id=?", (current_user.id,))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/knowledge/chat")
+@login_required
+def api_knowledge_chat():
+    data = request.get_json(silent=True) or {}
+    target = knowledge_target(data.get("username"))
+    if not target:
+        return jsonify({"error": "暂无可用的学生知识库"}), 404
+    message = str(data.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "请输入要检索的问题"}), 400
+    if len(message) > 5000:
+        return jsonify({"error": "单条问题不能超过 5000 个字符"}), 400
+    rows = query(
+        """SELECT kc.id,kc.document_id,kc.chunk_index,kc.content,kd.original_name
+           FROM knowledge_chunks kc JOIN knowledge_documents kd ON kd.id=kc.document_id
+           WHERE kc.user_id=? AND kd.status='ready'
+           ORDER BY kd.created_at DESC,kc.chunk_index ASC LIMIT 5000""",
+        (target["id"],),
+    )
+    sources = rank_knowledge_chunks(rows, message, limit=6)
+    if not rows:
+        return jsonify({"error": "该知识库还没有可用文档，请先上传并完成索引"}), 422
+    if not sources:
+        return jsonify({"error": "未在该学生的知识库中找到相关内容，请换一种问法"}), 422
+    history_rows = query(
+        """SELECT message,reply FROM knowledge_chat_logs WHERE user_id=? AND viewer_id=?
+           ORDER BY created_at DESC,id DESC LIMIT 6""",
+        (target["id"], current_user.id),
+    )
+    history = []
+    for row in reversed(history_rows):
+        history.extend((
+            {"role": "user", "content": row["message"]},
+            {"role": "assistant", "content": row["reply"]},
+        ))
+    try:
+        reply = knowledge_base_assistant(app.config, message, history, sources)
+    except DeepSeekError as exc:
+        return jsonify({"error": str(exc)}), 502
+    source_items = [
+        {
+            "document_id": item["document_id"],
+            "name": item["original_name"],
+            "chunk": int(item["chunk_index"]) + 1,
+            "snippet": item["snippet"],
+            "url": url_for("knowledge_document_download", document_id=item["document_id"]),
+        }
+        for item in sources
+    ]
+    stamp = now_iso()
+    execute(
+        """INSERT INTO knowledge_chat_logs(user_id,viewer_id,message,reply,sources,created_at)
+           VALUES (?,?,?,?,?,?)""",
+        (target["id"], current_user.id, message, reply,
+         json.dumps(source_items, ensure_ascii=False), stamp),
+    )
+    return jsonify({"reply": reply, "sources": source_items, "generated_at": stamp})
+
+
+@app.post("/api/knowledge/chat/clear")
+@login_required
+def api_knowledge_chat_clear():
+    data = request.get_json(silent=True) or {}
+    target = knowledge_target(data.get("username"))
+    if not target:
+        return jsonify({"error": "student_not_found"}), 404
+    execute(
+        "DELETE FROM knowledge_chat_logs WHERE user_id=? AND viewer_id=?",
+        (target["id"], current_user.id),
+    )
+    return jsonify({"ok": True})
+
+
+@app.post("/api/project-agents/<username>/token")
+@login_required
+def api_project_agent_token(username):
+    user = query("SELECT * FROM users WHERE username=? AND role='student'", (username,), one=True)
+    if not user:
+        return jsonify({"error": "student_not_found"}), 404
+    if current_user.role != "teacher":
+        return jsonify({"error": "forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    workspace = str(data.get("workspace_root") or f"/data/{username}").strip()
+    if workspace not in {f"/home/{username}", f"/data/{username}"}:
+        return jsonify({"error": "workspace_not_allowed"}), 400
+    token, token_hash = issue_agent_token(username, app.config["PROJECT_AGENT_TOKEN_SECRET"])
+    existing = query("SELECT id FROM project_agents WHERE user_id=?", (user["id"],), one=True)
+    if existing:
+        execute(
+            """UPDATE project_agents SET token_hash=?,workspace_root=?,enabled=1 WHERE id=?""",
+            (token_hash, workspace, existing["id"]),
+        )
+    else:
+        execute(
+            """INSERT INTO project_agents(user_id,token_hash,workspace_root,enabled,created_at)
+               VALUES (?,?,?,1,?)""",
+            (user["id"], token_hash, workspace, now_iso()),
+        )
+    return jsonify({
+        "token": token,
+        "username": username,
+        "workspace_root": workspace,
+        "token_file": f"/home/{username}/.config/eduflow-monitor/token",
+        "setup_script": "/data/kltst/project/monitor/setup-project-agent.sh",
+    })
+
+
+@app.post("/api/project-agent/report")
+def api_project_agent_report():
+    if request.content_length and request.content_length > MAX_REPORT_BYTES:
+        return jsonify({"error": "report_too_large"}), 413
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        return jsonify({"error": "invalid_agent_token"}), 401
+    raw_token = authorization[7:].strip()
+    if not raw_token.startswith("epm_"):
+        return jsonify({"error": "invalid_agent_token"}), 401
+    agent = query(
+        "SELECT * FROM project_agents WHERE token_hash=? AND enabled=1",
+        (hash_agent_token(raw_token),), one=True,
+    )
+    if not agent:
+        return jsonify({"error": "invalid_agent_token"}), 401
+    try:
+        payload = sanitize_agent_report(request.get_json(silent=True))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if payload["workspace"] != agent["workspace_root"]:
+        return jsonify({"error": "workspace_mismatch"}), 400
+    received = now_iso()
+    captured = payload["captured_at"] or received
+    db = get_db()
+    try:
+        db.execute("BEGIN")
+        db.execute(
+            "UPDATE project_agents SET agent_version=?,hostname=?,last_seen_at=? WHERE id=?",
+            (payload["agent_version"], payload["hostname"], received, agent["id"]),
+        )
+        db.execute(
+            "INSERT INTO project_snapshots(agent_id,captured_at,received_at,payload) VALUES (?,?,?,?)",
+            (agent["id"], captured, received, json.dumps(payload, ensure_ascii=False)),
+        )
+        db.execute(
+            """DELETE FROM project_snapshots WHERE agent_id=? AND id NOT IN (
+               SELECT id FROM project_snapshots WHERE agent_id=? ORDER BY received_at DESC,id DESC LIMIT 96
+               )""",
+            (agent["id"], agent["id"]),
+        )
+        db.execute("COMMIT")
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+    return jsonify({"status": "accepted", "received_at": received, "next_report_seconds": 60})
 
 
 @app.post("/api/assignments/<int:assignment_id>/submissions")
 @login_required
 def api_submission_create(assignment_id):
     if current_user.role != "student": return jsonify({"error": "student_required"}), 403
+    assignment = query("SELECT * FROM assignments WHERE id=?", (assignment_id,), one=True)
+    if not assignment: return jsonify({"error": "not_found"}), 404
+    submission_group = None
+    if assignment["assignment_mode"] == "group":
+        submission_group = assignment_group_for_student(assignment_id, current_user.id)
+        if not submission_group: return jsonify({"error": "not_assigned"}), 403
+        if not submission_group["is_leader"]: return jsonify({"error": "group_leader_required"}), 403
     try: filename = save_upload(request.files.get("file"))
     except ValueError as exc: return jsonify({"error": str(exc)}), 400
     if not filename: return jsonify({"error": "file_required"}), 400
-    version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND student_id=?",
-                    (assignment_id, current_user.id), one=True)["n"]
-    submission_id = execute("INSERT INTO submissions(assignment_id,student_id,file_url,submitted_at,version) VALUES (?,?,?,?,?)",
-                            (assignment_id, current_user.id, filename, now_iso(), version))
+    if submission_group:
+        version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND group_id=?",
+                        (assignment_id, submission_group["id"]), one=True)["n"]
+    else:
+        version = query("SELECT COALESCE(MAX(version),0)+1 n FROM submissions WHERE assignment_id=? AND student_id=? AND group_id IS NULL",
+                        (assignment_id, current_user.id), one=True)["n"]
+    submission_id = execute("INSERT INTO submissions(assignment_id,student_id,group_id,file_url,submitted_at,version) VALUES (?,?,?,?,?,?)",
+                            (assignment_id, current_user.id, submission_group["id"] if submission_group else None, filename, now_iso(), version))
     return jsonify({"id": submission_id, "file_url": f"/uploads/{filename}", "version": version}), 201
 
 

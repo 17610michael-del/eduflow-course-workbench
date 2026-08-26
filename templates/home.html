@@ -46,8 +46,8 @@
     <a class="stat-card accent-red exam-stat-card" href="{{ url_for('exams_page') }}">
       <div class="stat-icon">▤</div><div><span>{{ '考试管理' if current_user.role in ['teacher','assistant'] else '我的考试' }}</span><strong>{{ stats.exam_total }}</strong><small>{{ '已结束' if current_user.role in ['teacher','assistant'] else '已交卷' }} {{ stats.exam_completed }} · {{ stats.exam_percent }}%</small></div>
     </a>
-    <a class="stat-card accent-green" href="{{ url_for('students_page') }}">
-      <div class="stat-icon">♙</div><div><span>{{ '参与用户' if current_user.role in ['teacher','assistant'] else '课程成员' }}</span><strong>{{ stats.participants }}</strong><small>个系统账号</small></div>
+    <a class="stat-card accent-green" href="{{ url_for('users_page') }}">
+      <div class="stat-icon">♙</div><div><span>参与用户</span><strong>{{ stats.participants }}</strong><small>老师 · 助教 · 学生</small></div>
     </a>
   </section>
 

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}AI 知识库{% endblock %}
+{% block content %}
+<div class="page wide-page knowledge-page" data-knowledge-base data-knowledge-username="{{ target.username if target else '' }}">
+  <header class="page-header knowledge-header">
+    <div>
+      <p class="eyebrow">PRIVATE KNOWLEDGE BASE</p>
+      <h1>{{ '我的 AI 知识库' if current_user.role == 'student' else '学生 AI 知识库' }}</h1>
+      <p>上传资料、建立私有索引，让 AI 仅依据当前学生的文档回答并标注来源。</p>
+    </div>
+    <div class="knowledge-header-actions">
+      <span class="ai-status {{ 'online' if ai_enabled else 'offline' }}"><i></i>{{ 'DeepSeek 已连接' if ai_enabled else 'AI 服务未配置' }}</span>
+      {% if current_user.role in ['teacher','assistant'] and students %}
+      <form method="get" class="knowledge-student-select">
+        <label for="knowledge-student">当前学生</label>
+        <select id="knowledge-student" name="username" onchange="this.form.submit()">
+          {% for student in students %}<option value="{{ student.username }}" {% if target and target.id == student.id %}selected{% endif %}>{{ student.display_name }} (@{{ student.username }})</option>{% endfor %}
+        </select>
+      </form>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if target %}
+  <section class="knowledge-stats" aria-label="知识库统计">
+    <article><span>▧</span><div><small>已索引文档</small><strong>{{ stats.documents }}</strong></div></article>
+    <article><span>≡</span><div><small>知识片段</small><strong>{{ stats.chunks }}</strong></div></article>
+    <article><span>字</span><div><small>可检索字符</small><strong>{{ stats.characters }}</strong></div></article>
+    <article><span>◉</span><div><small>归属学生</small><strong>{{ target.display_name }}</strong><em>@{{ target.username }}</em></div></article>
+  </section>
+
+  <div class="knowledge-layout">
+    <aside class="knowledge-library">
+      {% if can_manage %}
+      <form class="panel knowledge-upload" method="post" action="{{ url_for('knowledge_document_upload') }}" enctype="multipart/form-data">
+        <input type="hidden" name="username" value="{{ target.username }}">
+        <div class="panel-heading"><div><p class="eyebrow">ADD SOURCE</p><h2>添加知识文档</h2></div></div>
+        <label class="knowledge-file-drop">
+          <input type="file" name="document" accept=".pdf,.docx,.txt,.md" required data-knowledge-file>
+          <span>⇧</span><strong data-knowledge-file-name>选择文档上传</strong>
+          <small>PDF、DOCX、TXT、Markdown · 最大 20MB</small>
+        </label>
+        <button class="btn btn-primary" type="submit">上传并建立索引</button>
+      </form>
+      {% endif %}
+
+      <section class="panel knowledge-documents">
+        <div class="panel-heading"><div><p class="eyebrow">SOURCES</p><h2>知识文档</h2></div><span>{{ documents|length }}</span></div>
+        <div class="knowledge-document-list">
+          {% for document in documents %}
+          <article class="knowledge-document {{ document.status }}">
+            <span class="knowledge-document-icon">{{ '✓' if document.status == 'ready' else ('!' if document.status == 'failed' else '…') }}</span>
+            <div>
+              <a href="{{ url_for('knowledge_document_download', document_id=document.id) }}">{{ document.original_name }}</a>
+              <small>
+                {% if document.status == 'ready' %}{{ document.chunk_count }} 个片段 · {{ document.file_size|file_size }}
+                {% elif document.status == 'failed' %}索引失败：{{ document.error_message }}
+                {% else %}正在建立索引{% endif %}
+              </small>
+              <em>{{ document.created_at|relative_time }} · {{ document.creator_name }}</em>
+            </div>
+            {% if can_manage %}<form method="post" action="{{ url_for('knowledge_document_delete', document_id=document.id) }}" onsubmit="return confirm('确定删除这份知识文档及其索引吗？')"><button type="submit" aria-label="删除文档">×</button></form>{% endif %}
+          </article>
+          {% else %}
+          <div class="knowledge-doc-empty"><span>▧</span><strong>还没有知识文档</strong><p>{{ '上传第一份资料后即可开始问答。' if can_manage else '暂无可供检索的资料。' }}</p></div>
+          {% endfor %}
+        </div>
+      </section>
+    </aside>
+
+    <section class="panel knowledge-chat">
+      <header><div><span>✦</span><div><p class="eyebrow">GROUNDED CHAT</p><h2>基于 {{ target.display_name }} 的资料问答</h2></div></div><button class="btn btn-secondary btn-sm" type="button" data-clear-knowledge-chat {% if not chat_logs %}disabled{% endif %}>清空对话</button></header>
+      <div class="knowledge-chat-thread" data-knowledge-thread aria-live="polite">
+        <div class="knowledge-welcome" data-knowledge-welcome {% if chat_logs %}hidden{% endif %}>
+          <span>✦</span><h3>从私有资料中获得答案</h3><p>AI 只使用命中的文档片段，回答后会列出引用文件。</p>
+          <div><button type="button" data-knowledge-prompt="总结这些资料的核心内容">总结核心内容</button><button type="button" data-knowledge-prompt="这些资料中有哪些重要概念？">提取重要概念</button></div>
+        </div>
+        {% for log in chat_logs %}
+        <article class="knowledge-message user"><div><strong>你</strong><p>{{ log.message }}</p></div></article>
+        <article class="knowledge-message assistant"><span>AI</span><div><strong>知识库助手</strong><p>{{ log.reply }}</p>{% if log.sources %}<div class="knowledge-sources">{% for source in log.sources %}<a href="{{ source.url }}"><b>[{{ loop.index }}]</b> {{ source.name }} · 片段 {{ source.chunk }}</a>{% endfor %}</div>{% endif %}<small>{{ log.created_at|date_cn }}</small></div></article>
+        {% endfor %}
+      </div>
+      <form class="knowledge-composer" data-knowledge-form>
+        <textarea rows="3" maxlength="5000" placeholder="输入要从这个知识库中检索的问题…" {% if not ai_enabled or stats.chunks == 0 %}disabled{% endif %}></textarea>
+        <div><small>回答仅基于当前知识库，请通过引用来源核对。</small><button class="btn btn-primary" type="submit" {% if not ai_enabled or stats.chunks == 0 %}disabled{% endif %}>检索并提问 <span>↗</span></button></div>
+      </form>
+    </section>
+  </div>
+  {% else %}
+  <div class="empty-page"><strong>▧</strong><h1>暂无学生账号</h1><p>学生首次登录后即可创建独立 AI 知识库。</p></div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}DeepSeek 工作台{% endblock %}
+{% block content %}
+<div class="page ai-chat-page" data-ai-chat>
+  <header class="page-header ai-chat-header">
+    <div>
+      <p class="eyebrow">DEEPSEEK WORKBENCH</p>
+      <h1>DeepSeek 工作台</h1>
+      <p>服务器直接调用 DeepSeek API，登录后直接使用，无需任何额外选择。</p>
+    </div>
+    <div class="ai-chat-actions">
+      <span class="ai-status {{ 'online' if ai_enabled else 'offline' }}"><i></i>{{ 'DeepSeek API 直连' if ai_enabled else 'DeepSeek API 未配置' }}</span>
+      <button class="btn btn-secondary" type="button" data-clear-ai-chat {% if not chat_logs %}disabled{% endif %}>清空对话</button>
+    </div>
+  </header>
+
+  <section class="panel ai-chat-workspace">
+    <div class="ai-chat-thread" data-ai-chat-thread aria-live="polite">
+      <div class="ai-chat-welcome" data-ai-chat-welcome {% if chat_logs %}hidden{% endif %}>
+        <span>✦</span>
+        <h2>你好，{{ current_user.name }}</h2>
+        <p>我是直接连接 DeepSeek API 的课程助手。直接输入问题即可。</p>
+        <div class="ai-prompt-grid">
+          <button type="button" data-ai-prompt="帮我制定一个本周的课程学习计划">制定学习计划<small>按目标拆解本周安排</small></button>
+          <button type="button" data-ai-prompt="请解释一个我正在学习的知识点，并给出例子">讲解知识点<small>用例子帮助理解概念</small></button>
+          <button type="button" data-ai-prompt="帮我整理考试复习框架和重点清单">准备考试复习<small>梳理重点与练习建议</small></button>
+        </div>
+      </div>
+      {% for log in chat_logs %}
+      <article class="ai-message user"><div><strong>你</strong><p>{{ log.message }}</p></div></article>
+      <article class="ai-message assistant"><span class="ai-message-avatar">DS</span><div><strong>DeepSeek</strong><p>{{ log.reply }}</p><small>{{ log.created_at|date_cn }}</small></div></article>
+      {% endfor %}
+    </div>
+    <form class="ai-chat-composer" data-ai-chat-form>
+      <label for="ai-chat-message">发送消息</label>
+      <textarea id="ai-chat-message" rows="3" maxlength="6000" placeholder="输入你的问题，Enter 发送，Shift + Enter 换行" {% if not ai_enabled %}disabled{% endif %}></textarea>
+      <div>
+        <small>DeepSeek 生成内容仅供学习和教学参考，请核对重要信息。</small>
+        <button class="btn btn-primary" type="submit" {% if not ai_enabled %}disabled{% endif %}>发送 <span>↗</span></button>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}

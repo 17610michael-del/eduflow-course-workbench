@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}DeepSeek 项目工作台{% endblock %}
+{% block content %}
+<div class="page wide-page ds-workbench-page" data-deepseek-workbench data-session-id="{{ selected_session.id if selected_session else '' }}">
+  <header class="page-header ds-workbench-header">
+    <div>
+      <p class="eyebrow">PERSONAL PROJECT WORKBENCH</p>
+      <h1>DeepSeek 项目工作台</h1>
+      <p>AI 直接读取并分析你的个人项目，工作区与其他用户完全隔离。</p>
+    </div>
+    <div class="ds-workbench-statuses">
+      <span class="ai-status {{ 'online' if ai_enabled else 'offline' }}"><i></i>{{ 'DeepSeek API 直连' if ai_enabled else 'DeepSeek API 未配置' }}</span>
+      <span class="ds-readonly-badge">只读保护</span>
+    </div>
+  </header>
+
+  <section class="panel ds-workbench-shell">
+    <aside class="ds-session-pane">
+      <div class="ds-pane-heading">
+        <div><span class="ds-logo">DS</span><strong>项目对话</strong></div>
+        <button class="ds-icon-button" type="button" data-new-ds-session title="新建对话" {% if not workspace_available %}disabled{% endif %}>＋</button>
+      </div>
+      <div class="ds-session-list" data-ds-session-list>
+        {% for item in sessions %}
+        <a href="{{ url_for('deepseek_workbench_page', session=item.id) }}" class="ds-session-item {% if selected_session and selected_session.id == item.id %}active{% endif %}">
+          <span>✦</span><span><strong>{{ item.title }}</strong><small>{{ item.updated_at|relative_time }}</small></span>
+          <button type="button" data-delete-ds-session="{{ item.id }}" aria-label="删除对话" title="删除对话">×</button>
+        </a>
+        {% else %}
+        <div class="ds-session-empty">还没有对话<br><small>点击右上角 ＋ 开始</small></div>
+        {% endfor %}
+      </div>
+      <div class="ds-session-footer">
+        <span>当前身份</span>
+        <strong>@{{ current_user.username }}</strong>
+        <small>仅可访问自己的工作区</small>
+      </div>
+    </aside>
+
+    <section class="ds-chat-pane">
+      <div class="ds-chat-topbar">
+        <div><strong>{{ selected_session.title if selected_session else '新项目对话' }}</strong><small>DeepSeek · 自动使用项目工具</small></div>
+        <span title="系统固定使用 DeepSeek API">固定 DeepSeek</span>
+      </div>
+      <div class="ds-chat-thread" data-ds-chat-thread aria-live="polite">
+        {% if not selected_session %}
+        <div class="ds-chat-welcome">
+          <span>✦</span>
+          <h2>从你的项目开始</h2>
+          <p>新建对话后，可以让 DeepSeek 查看目录、阅读代码或查找实现。</p>
+          <button class="btn btn-primary" type="button" data-new-ds-session {% if not workspace_available %}disabled{% endif %}>新建项目对话</button>
+        </div>
+        {% elif not messages %}
+        <div class="ds-chat-welcome" data-ds-welcome>
+          <span>✦</span>
+          <h2>你好，{{ current_user.name }}</h2>
+          <p>我可以直接了解右侧工作区中的项目，但不会修改文件或执行命令。</p>
+          <div class="ds-suggestion-grid">
+            <button type="button" data-ds-prompt="先查看项目目录，概括这个项目的结构和用途">概括项目结构<small>浏览目录并说明各模块</small></button>
+            <button type="button" data-ds-prompt="阅读这个项目的主要代码，帮我找到入口和核心流程">分析核心流程<small>定位入口与关键逻辑</small></button>
+            <button type="button" data-ds-prompt="搜索项目中的待办项、FIXME 和明显问题，给出改进建议">检查项目问题<small>搜索 TODO 与潜在风险</small></button>
+          </div>
+        </div>
+        {% endif %}
+        {% for message in messages %}
+        <article class="ds-message {{ message.role }}">
+          {% if message.role == 'assistant' %}<span class="ds-message-avatar">DS</span>{% endif %}
+          <div><strong>{{ 'DeepSeek' if message.role == 'assistant' else '你' }}</strong>
+            <div class="ds-message-content">{% if message.role == 'assistant' %}{{ message.content|markdown|safe }}{% else %}<p>{{ message.content }}</p>{% endif %}</div>
+            {% if message.tool_events %}<div class="ds-tool-events">{% for event in message.tool_events %}<span class="{{ 'ok' if event.ok else 'error' }}">{{ '✓' if event.ok else '!' }} {{ {'list_directory':'浏览目录','read_file':'读取文件','search_text':'搜索代码'}.get(event.name,event.name) }}</span>{% endfor %}</div>{% endif %}
+            <small>{{ message.created_at|relative_time }}</small>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      <form class="ds-composer" data-ds-message-form>
+        <textarea rows="3" maxlength="8000" placeholder="让 DeepSeek 分析你的项目…" {% if not selected_session or not workspace_available or not ai_enabled %}disabled{% endif %}></textarea>
+        <div><small>Enter 发送 · Shift + Enter 换行</small><button class="btn btn-primary" type="submit" {% if not selected_session or not workspace_available or not ai_enabled %}disabled{% endif %}>发送 <span>↗</span></button></div>
+      </form>
+    </section>
+
+    <aside class="ds-files-pane">
+      <div class="ds-pane-heading">
+        <div><span>▣</span><strong>个人项目</strong></div>
+        <button class="ds-icon-button" type="button" data-refresh-ds-files title="刷新目录" {% if not workspace_available %}disabled{% endif %}>↻</button>
+      </div>
+      <div class="ds-workspace-root"><span>工作区</span><strong>{{ workspace_root }}</strong><small>用户隔离 · 敏感文件已屏蔽</small></div>
+      {% if workspace_available %}
+      <div class="ds-file-nav"><button type="button" data-ds-files-back disabled>←</button><span data-ds-current-path>.</span></div>
+      <div class="ds-file-list" data-ds-file-list>
+        {% for entry in workspace_entries %}
+        <button type="button" class="ds-file-item" data-ds-file-type="{{ entry.type }}" data-ds-file-path="{{ entry.path }}"><span>{{ '▸' if entry.type == 'directory' else '◇' }}</span><span><strong>{{ entry.name }}</strong><small>{{ '目录' if entry.type == 'directory' else (entry.size|file_size) }}</small></span></button>
+        {% else %}<div class="ds-files-empty">工作区内暂无项目文件</div>{% endfor %}
+      </div>
+      <div class="ds-file-preview" data-ds-file-preview hidden>
+        <div><strong data-ds-preview-name></strong><button type="button" data-close-ds-preview>×</button></div>
+        <pre><code data-ds-preview-content></code></pre>
+      </div>
+      {% else %}
+      <div class="ds-workspace-unavailable"><span>!</span><strong>工作区不可用</strong><p>请让管理员确认目录存在，并允许当前服务读取。</p></div>
+      {% endif %}
+    </aside>
+  </section>
+</div>
+{% endblock %}
