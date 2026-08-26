@@ -30,6 +30,8 @@ with app.test_client() as client:
     check("interaction filter works", client.get("/assignments?view=interactions").status_code == 200, "HTTP 200")
     check("read assignments API", client.get("/api/assignments").status_code == 200, "HTTP 200")
     check("view assignment detail", client.get("/assignments/1").status_code == 200, "HTTP 200")
+    users_html = client.get("/users").get_data(as_text=True)
+    check("view complete user directory", "用户信息" in users_html and "老师" in users_html and "学生" in users_html, "all-role directory visible")
     check("view shared student directory", client.get("/students").status_code == 200, "HTTP 200")
     check("read shared student API", client.get("/api/students").status_code == 200, "HTTP 200")
     check("cannot create assignment", client.post("/api/assignments", json={"title": "x", "description": "x"}).status_code == 403, "HTTP 403")
