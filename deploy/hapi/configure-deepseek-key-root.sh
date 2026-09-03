@@ -49,8 +49,6 @@ chmod 0600 "$key_tmp"
 {
   printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_KEY"
   printf 'DEEPSEEK_BASE_URL=https://api.deepseek.com\n'
-  printf 'DEEPSEEK_CHAT_MODEL=deepseek-v4-flash\n'
-  printf 'DEEPSEEK_REASONING_MODEL=deepseek-v4-pro\n'
 } >"$key_tmp"
 install -m 0600 -o root -g root "$key_tmp" "$KEY_FILE"
 rm -f -- "$key_tmp"

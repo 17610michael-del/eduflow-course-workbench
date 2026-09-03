@@ -5,7 +5,7 @@ set -euo pipefail
 SERVICE_ROOT=/data/kltst/homework/services/hapi
 NATIVE_DIR="$SERVICE_ROOT/native"
 SRC_BIN="$SERVICE_ROOT/source-v0.20.2/cli/dist-exe/bun-linux-x64-baseline/hapi"
-VERSION_TAG="${HAPI_NATIVE_VERSION_TAG:-0.20.2-ds-20260826}"
+VERSION_TAG="${HAPI_NATIVE_VERSION_TAG:-0.20.2-ds-$(date +%Y%m%d-%H%M%S)}"
 TEST_ROOT="$SERVICE_ROOT/test-instance"
 WORKSPACE=/data/kltst/hapi-ds-test
 PORT=32099
@@ -43,6 +43,16 @@ pid_alive() {
   pid=$(cat "$pid_file")
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
+
+if [[ "${HAPI_TEST_RESTART:-0}" == "1" ]]; then
+  for pid_file in "$TEST_ROOT/runner.pid" "$TEST_ROOT/hub.pid"; do
+    if pid_alive "$pid_file"; then
+      kill "$(cat "$pid_file")" 2>/dev/null || true
+    fi
+    rm -f -- "$pid_file"
+  done
+  sleep 1
+fi
 
 if ! pid_alive "$TEST_ROOT/hub.pid"; then
   if ss -ltn 2>/dev/null | grep -qE ":${PORT}[[:space:]]"; then

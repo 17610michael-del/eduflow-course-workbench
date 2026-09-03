@@ -117,24 +117,40 @@ msgs = wait_turn_done()
 content = open(hello_path, encoding="utf-8").read().strip() if os.path.isfile(hello_path) else ""
 check("deepseek-modified-file", "hello eduflow" in content, repr(content[:60]))
 
-# 6. path escape must be rejected
+# 6. bundled ripgrep search tool
+needle_path = os.path.join(WORKSPACE, "needle.txt")
+search_result_path = os.path.join(WORKSPACE, "search-result.txt")
+with open(needle_path, "w", encoding="utf-8") as fh:
+    fh.write("EDUFLOW_RIPGREP_NEEDLE\n")
+if os.path.exists(search_result_path):
+    os.remove(search_result_path)
+check("send-search-prompt", send(
+    "必须先调用 search_files 搜索 EDUFLOW_RIPGREP_NEEDLE；找到后用 write_file "
+    "创建 search-result.txt，内容只写匹配文件的相对路径。"
+))
+msgs = wait_turn_done()
+search_result = open(search_result_path, encoding="utf-8").read().strip() if os.path.isfile(search_result_path) else ""
+check("bundled-ripgrep-search", "needle.txt" in search_result, repr(search_result[:80]))
+
+# 7. path escape must be rejected
 if os.path.exists(ESCAPE_TARGET):
     os.remove(ESCAPE_TARGET)
 check("send-escape-prompt", send("请使用 write_file 在 ../escape.txt 写入 forbidden。"))
 msgs = wait_turn_done()
 check("path-escape-blocked", not os.path.exists(ESCAPE_TARGET))
 
-# 7. model switching
+# 8. model switching
 status, _ = req("POST", f"/api/sessions/{session_id}/model", {"model": "deepseek-v4-pro"}, jwt=jwt)
 check("switch-to-v4-pro", status == 200, f"status={status}")
 status, _ = req("POST", f"/api/sessions/{session_id}/model", {"model": "gpt-5"}, jwt=jwt, expect_error=True)
 check("reject-unsupported-model", status in (400, 409), f"status={status}")
 
-# 8. cleanup workspace test file
-try:
-    os.remove(hello_path)
-except OSError:
-    pass
+# 9. cleanup workspace test files
+for path in (hello_path, needle_path, search_result_path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 failed = [r for r in results if not r[1]]
 print(f"\n{len(results) - len(failed)}/{len(results)} passed")

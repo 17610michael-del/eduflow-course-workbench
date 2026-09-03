@@ -2,7 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-RUNTIME_ROOT="${HAPI_RUNTIME_ROOT:-/data/kltst/homework/services/hapi/runtime}"
 NATIVE_BIN="${HAPI_NATIVE_BIN:-/data/kltst/homework/services/hapi/native/hapi}"
 HAPI_BIN="$NATIVE_BIN"
 ENV_DIR=/etc/eduflow-hapi
@@ -10,7 +9,9 @@ SECRET_FILE="$ENV_DIR/token-secret"
 DEEPSEEK_ENV=/etc/eduflow-ai/deepseek.env
 SERVER_HOST="${HAPI_SERVER_HOST:-10.98.103.193}"
 PORT_BASE="${HAPI_PORT_BASE:-32000}"
+LISTEN_HOST="${HAPI_LISTEN_HOST:-127.0.0.1}"
 TEACHER_GROUP="${HAPI_TEACHER_GROUP:-teacher}"
+PUBLIC_DOMAIN_SUFFIX="${HAPI_PUBLIC_DOMAIN_SUFFIX:-}"
 
 usage() {
   echo "用法：sudo $0 student01 [student02 ...]" >&2
@@ -32,6 +33,14 @@ fi
   echo "HAPI_SERVER_HOST 格式不正确。" >&2
   exit 1
 }
+[[ "$LISTEN_HOST" == "127.0.0.1" || "$LISTEN_HOST" == "::1" ]] || {
+  echo "正式 HAPI 只允许绑定本机回环地址。" >&2
+  exit 1
+}
+if [[ -n "$PUBLIC_DOMAIN_SUFFIX" ]] && [[ ! "$PUBLIC_DOMAIN_SUFFIX" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "HAPI_PUBLIC_DOMAIN_SUFFIX 格式不正确。" >&2
+  exit 1
+fi
 [[ -x "$HAPI_BIN" ]] || {
   echo "原生 HAPI 二进制不存在：$HAPI_BIN，请先在 kltst 下完成构建与测试。" >&2
   exit 1
@@ -78,17 +87,21 @@ print("ehh_" + base64.urlsafe_b64encode(digest).decode().rstrip("="))
 PY
 }
 
+failed_users=()
 for username in "$@"; do
   if [[ ! "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
     echo "跳过异常用户名：$username" >&2
+    failed_users+=("$username")
     continue
   fi
   if ! getent passwd "$username" >/dev/null; then
     echo "跳过不存在的 Linux 用户：$username" >&2
+    failed_users+=("$username")
     continue
   fi
   if [[ ! -d "/data/$username" ]]; then
     echo "跳过 $username：工作区 /data/$username 不存在" >&2
+    failed_users+=("$username")
     continue
   fi
 
@@ -98,7 +111,12 @@ for username in "$@"; do
   port=$((PORT_BASE + uid_number - 1000))
   if [[ "$port" -lt 20000 || "$port" -gt 60000 ]]; then
     echo "跳过 $username：根据 UID 计算的端口超出范围 ($port)" >&2
+    failed_users+=("$username")
     continue
+  fi
+  public_origin=""
+  if [[ -n "$PUBLIC_DOMAIN_SUFFIX" ]]; then
+    public_origin="https://hapi-$username.$PUBLIC_DOMAIN_SUFFIX"
   fi
 
   token=$(derive_token "$username")
@@ -125,12 +143,20 @@ for username in "$@"; do
   {
     printf 'CLI_API_TOKEN=%s\n' "$token"
     printf 'HAPI_API_URL=http://127.0.0.1:%s\n' "$port"
-    printf 'HAPI_LISTEN_HOST=0.0.0.0\n'
+    printf 'HAPI_LISTEN_HOST=%s\n' "$LISTEN_HOST"
     printf 'HAPI_LISTEN_PORT=%s\n' "$port"
+    if [[ -n "$public_origin" ]]; then
+      printf 'HAPI_PUBLIC_URL=%s/\n' "$public_origin"
+      printf 'CORS_ORIGINS=%s\n' "$public_origin"
+    fi
     printf 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
   } >"$env_tmp"
   {
-    printf 'HAPI_HUB_URL=http://%s:%s\n' "$SERVER_HOST" "$port"
+    if [[ -n "$public_origin" ]]; then
+      printf 'HAPI_HUB_URL=%s/\n' "$public_origin"
+    else
+      printf 'HAPI_HUB_URL=http://%s:%s\n' "$SERVER_HOST" "$port"
+    fi
     printf 'HAPI_HUB_TOKEN=%s\n' "$token"
     printf 'HAPI_WORKSPACE=/data/%s\n' "$username"
   } >"$access_tmp"
@@ -153,6 +179,7 @@ for username in "$@"; do
   if [[ "$hub_ready" -ne 1 ]]; then
     echo "Hub 启动失败：$username（端口 $port）" >&2
     systemctl --no-pager --full status "eduflow-hapi-hub@$username.service" >&2 || true
+    failed_users+=("$username")
     continue
   fi
 
@@ -163,7 +190,12 @@ for username in "$@"; do
   else
     echo "Runner 启动失败：$username" >&2
     systemctl --no-pager --full status "eduflow-hapi-runner@$username.service" >&2 || true
+    failed_users+=("$username")
   fi
 done
 
+if [[ "${#failed_users[@]}" -ne 0 ]]; then
+  printf 'HAPI 安装失败用户：%s\n' "${failed_users[*]}" >&2
+  exit 1
+fi
 echo "HAPI_INDEPENDENT_HUBS_INSTALL_OK"

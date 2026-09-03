@@ -20,7 +20,6 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/data/%i
 ReadWritePaths=-/home/%i/.hapi-runner
-ReadWritePaths=-/home/%i/.claude
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
