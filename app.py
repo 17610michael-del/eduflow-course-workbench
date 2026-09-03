@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import bleach
 import pam
@@ -536,7 +536,9 @@ def ensure_database():
 @login_manager.user_loader
 def load_user(user_id):
     row = query("SELECT * FROM users WHERE id=?", (user_id,), one=True)
-    return User(row) if row else None
+    if not row or row["username"] not in app.config["ALLOWED_USERS"]:
+        return None
+    return User(row)
 
 
 @login_manager.unauthorized_handler
@@ -602,6 +604,11 @@ def pam_authenticate(username: str, password: str) -> bool:
     return bool(authenticator.authenticate(username, password, service="login"))
 
 
+def user_is_allowed(username: str) -> bool:
+    """Fail closed: only explicitly configured Linux users may authenticate."""
+    return bool(username and username in app.config["ALLOWED_USERS"])
+
+
 def locked_until(username: str):
     cutoff = (datetime.now() - LOCK_WINDOW).replace(microsecond=0).isoformat()
     execute("DELETE FROM login_failures WHERE failed_at < ?", (cutoff,))
@@ -626,8 +633,8 @@ def login():
         until = locked_until(username) if username else None
         if until:
             flash(f"登录失败次数过多，请在 {until.strftime('%H:%M')} 后重试。", "danger")
-        elif not username or not password or not pam_authenticate(username, password):
-            if username:
+        elif not user_is_allowed(username) or not password or not pam_authenticate(username, password):
+            if user_is_allowed(username):
                 record_login_failure(username)
             flash("服务器用户名或密码错误。", "danger")
         else:
@@ -1192,8 +1199,30 @@ def api_deepseek_workbench_message(session_id):
     return jsonify({"reply": final_reply, "tool_events": tool_events, "title": title, "generated_at": created})
 
 
-HAPI_SERVER_HOST = os.environ.get("HAPI_SERVER_HOST", "10.98.103.193")
-HAPI_PORT_BASE = int(os.environ.get("HAPI_PORT_BASE", "32000"))
+HAPI_SERVER_HOST = app.config["HAPI_SERVER_HOST"]
+HAPI_PORT_BASE = app.config["HAPI_PORT_BASE"]
+
+
+def hapi_launch_base_url(username: str, port: int) -> str:
+    template = app.config.get("HAPI_PUBLIC_URL_TEMPLATE", "").strip()
+    if not template:
+        return f"http://{HAPI_SERVER_HOST}:{port}"
+    try:
+        public_url = template.format(username=username, port=port).rstrip("/")
+    except (IndexError, KeyError, ValueError) as exc:
+        raise ValueError("HAPI public URL template is invalid") from exc
+    parsed = urlsplit(public_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in ("", "/")
+    ):
+        raise ValueError("HAPI public URL must be an HTTPS origin")
+    return public_url
 
 
 @app.get("/hapi/launch")
@@ -1212,6 +1241,9 @@ def hapi_launch():
         return redirect(url_for("home"))
     linux_uid = linux_account.pw_uid
     port = HAPI_PORT_BASE + linux_uid - 1000
+    if not 20000 <= port <= 60000:
+        flash("当前账号的 HAPI 端口不在允许范围内，请联系管理员。", "warning")
+        return redirect(url_for("home"))
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
             pass
@@ -1231,8 +1263,13 @@ def hapi_launch():
     if not token.startswith("ehh_") or len(token) < 40:
         flash("HAPI 登录凭据格式异常，请联系管理员。", "warning")
         return redirect(url_for("home"))
+    try:
+        launch_base_url = hapi_launch_base_url(current_user.username, port)
+    except ValueError:
+        flash("HAPI 公网入口配置异常，请联系管理员。", "warning")
+        return redirect(url_for("home"))
     # Token 放在 URL fragment 中，不会发送到 Web 服务器或出现在访问日志里。
-    return redirect(f"http://{HAPI_SERVER_HOST}:{port}/#token={quote(token, safe='')}")
+    return redirect(f"{launch_base_url}/#token={quote(token, safe='')}")
 
 
 @app.get("/knowledge")
@@ -2435,8 +2472,8 @@ def api_auth_login():
     remember = bool(data.get("remember", False))
     until = locked_until(username) if username else None
     if until: return jsonify({"error": "temporarily_locked", "retry_at": until.isoformat()}), 429
-    if not username or not password or not pam_authenticate(username, password):
-        if username: record_login_failure(username)
+    if not user_is_allowed(username) or not password or not pam_authenticate(username, password):
+        if user_is_allowed(username): record_login_failure(username)
         return jsonify({"error": "invalid_credentials"}), 401
     execute("DELETE FROM login_failures WHERE username=?", (username,))
     role = role_for_linux_user(username)

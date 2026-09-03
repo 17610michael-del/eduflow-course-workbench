@@ -1,9 +1,25 @@
-"""Read-only smoke test for the standalone AI conversation workspace."""
-from app import app, query, table_columns
+"""Isolated smoke test for the standalone AI conversation workspace."""
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+
+temporary = tempfile.TemporaryDirectory(prefix="eduflow-ai-chat-")
+os.environ["SECRET_KEY"] = "ai-chat-test-secret"
+os.environ["DATABASE"] = os.path.join(temporary.name, "test.db")
+os.environ["UPLOAD_FOLDER"] = os.path.join(temporary.name, "uploads")
+os.environ["SERVER_SUBMISSION_ROOT"] = os.path.join(temporary.name, "server-files")
+os.environ["ALLOWED_USERS"] = "demo_teacher,demo_student"
+os.environ["DEEPSEEK_API_KEY"] = "test-only-not-real"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app import app, init_db, query, table_columns  # noqa: E402
 from subsystems.ai import services
 
 
 with app.app_context():
+    init_db()
     user = query("SELECT id FROM users ORDER BY id LIMIT 1", one=True)
     assert user is not None, "at least one user account is required"
 
@@ -38,3 +54,4 @@ finally:
     services.deepseek_chat = original
 
 print("AI_CHAT_TEST_OK")
+temporary.cleanup()

@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 temporary = tempfile.TemporaryDirectory(prefix="eduflow-project-test-")
+os.environ["SECRET_KEY"] = "project-monitor-test-secret"
 os.environ["DATABASE"] = os.path.join(temporary.name, "test.db")
 os.environ["UPLOAD_FOLDER"] = os.path.join(temporary.name, "uploads")
 os.environ["SERVER_SUBMISSION_ROOT"] = os.path.join(temporary.name, "server-files")
+os.environ["ALLOWED_USERS"] = "demo_teacher,demo_student,other_student"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import app, execute, init_db, query  # noqa: E402
 

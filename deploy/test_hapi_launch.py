@@ -35,7 +35,13 @@ def main():
         )
 
         app_module.DATABASE = root / "test.db"
-        app_module.app.config.update(TESTING=True, SECRET_KEY="hapi-launch-test-secret")
+        app_module.app.config.update(
+            TESTING=True,
+            SECRET_KEY="hapi-launch-test-secret",
+            ALLOWED_USERS={"student01"},
+            DEEPSEEK_3066_MENU_ENABLED=False,
+            HAPI_PUBLIC_URL_TEMPLATE="https://hapi-{username}.47.96.100.122.nip.io/",
+        )
         with app_module.app.app_context():
             app_module.init_db(seed=False)
             user_id = app_module.execute(
@@ -56,8 +62,26 @@ def main():
                 session["_fresh"] = True
             response = client.get("/hapi/launch")
             assert response.status_code == 302
-            assert response.location == f"http://10.98.103.193:32003/#token={token}"
+            assert response.location == (
+                f"https://hapi-student01.47.96.100.122.nip.io/#token={token}"
+            )
             assert "?token=" not in response.location
+            home_response = client.get("/")
+            assert home_response.status_code == 200
+            assert b"http://10.98.103.193:3066/" not in home_response.data
+            assert b'href="/hapi/launch"' in home_response.data
+
+            app_module.app.config["HAPI_PUBLIC_URL_TEMPLATE"] = ""
+            internal_response = client.get("/hapi/launch")
+            assert internal_response.location == f"http://10.98.103.193:32003/#token={token}"
+
+            app_module.app.config["HAPI_PUBLIC_URL_TEMPLATE"] = "http://invalid/{username}"
+            invalid_response = client.get("/hapi/launch")
+            assert invalid_response.location == "/"
+
+            app_module.app.config["DEEPSEEK_3066_MENU_ENABLED"] = True
+            enabled_menu_response = client.get("/")
+            assert b"http://10.98.103.193:3066/" in enabled_menu_response.data
         finally:
             app_module.pwd = original_pwd
             socket.create_connection = original_connect

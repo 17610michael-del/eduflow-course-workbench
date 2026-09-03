@@ -1,5 +1,19 @@
-"""Read-only smoke test for the all-role course user directory."""
-from app import app, query
+"""Isolated smoke test for the all-role course user directory."""
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+
+temporary = tempfile.TemporaryDirectory(prefix="eduflow-user-directory-")
+os.environ["SECRET_KEY"] = "user-directory-test-secret"
+os.environ["DATABASE"] = os.path.join(temporary.name, "test.db")
+os.environ["UPLOAD_FOLDER"] = os.path.join(temporary.name, "uploads")
+os.environ["SERVER_SUBMISSION_ROOT"] = os.path.join(temporary.name, "server-files")
+os.environ["ALLOWED_USERS"] = "demo_teacher,demo_student"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app import app, init_db, query  # noqa: E402
 
 
 def check(label, condition, detail=""):
@@ -9,6 +23,7 @@ def check(label, condition, detail=""):
 
 
 with app.app_context():
+    init_db()
     users = [dict(row) for row in query("SELECT id,username,display_name,role FROM users ORDER BY id")]
     check("users available", bool(users), f"{len(users)} account(s)")
     first_user = users[0]
@@ -29,3 +44,4 @@ with app.test_client() as client:
     check("student directory preserved", client.get("/students").status_code == 200, "HTTP 200")
 
 print("USER_DIRECTORY_TEST_OK")
+temporary.cleanup()

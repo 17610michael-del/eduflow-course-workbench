@@ -21,6 +21,7 @@ def main():
             SECRET_KEY="isolated-test-secret",
             DEEPSEEK_API_KEY="test-only-not-real",
             WORKBENCH_WORKSPACE_BASE=str(root / "data"),
+            ALLOWED_USERS={"student01", "student02"},
         )
         student_root = root / "data" / "student01"
         project_root = student_root / "demo-project"

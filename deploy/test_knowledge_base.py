@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ os.environ["DATABASE"] = os.path.join(temporary.name, "test.db")
 os.environ["UPLOAD_FOLDER"] = os.path.join(temporary.name, "uploads")
 os.environ["SERVER_SUBMISSION_ROOT"] = os.path.join(temporary.name, "server-files")
 os.environ["SESSION_COOKIE_SECURE"] = "0"
+os.environ["ALLOWED_USERS"] = "demo_teacher,demo_student,knowledge_other"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import app, execute, init_db, query  # noqa: E402
 

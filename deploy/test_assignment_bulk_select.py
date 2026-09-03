@@ -1,8 +1,23 @@
-"""Read-only smoke test for bulk assignment recipient controls."""
-from app import app, query
+"""Isolated smoke test for bulk assignment recipient controls."""
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+
+temporary = tempfile.TemporaryDirectory(prefix="eduflow-bulk-select-")
+os.environ["SECRET_KEY"] = "bulk-select-test-secret"
+os.environ["DATABASE"] = os.path.join(temporary.name, "test.db")
+os.environ["UPLOAD_FOLDER"] = os.path.join(temporary.name, "uploads")
+os.environ["SERVER_SUBMISSION_ROOT"] = os.path.join(temporary.name, "server-files")
+os.environ["ALLOWED_USERS"] = "demo_teacher,demo_student"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app import app, init_db, query  # noqa: E402
 
 
 with app.app_context():
+    init_db()
     teacher = query("SELECT id FROM users WHERE role='teacher' ORDER BY id LIMIT 1", one=True)
     assert teacher is not None, "teacher account required"
 
@@ -20,3 +35,4 @@ with app.test_client() as client:
     assert html.count("data-toggle-checks") == 3
 
 print("ASSIGNMENT_BULK_SELECT_TEST_OK")
+temporary.cleanup()

@@ -15,6 +15,7 @@ os.environ["SECRET_KEY"] = "group-assignment-test-secret"
 os.environ["DATABASE"] = str(root / "app.db")
 os.environ["UPLOAD_FOLDER"] = str(root / "uploads")
 os.environ["SERVER_SUBMISSION_ROOT"] = str(root / "server-files")
+os.environ["ALLOWED_USERS"] = "teacher,leader,member"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 app_module = importlib.import_module(os.environ.get("EDUFLOW_APP_MODULE", "app"))

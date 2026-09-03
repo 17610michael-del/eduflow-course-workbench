@@ -20,11 +20,18 @@ class Config:
     DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     DEEPSEEK_CHAT_MODEL = os.environ.get("DEEPSEEK_CHAT_MODEL", "deepseek-v4-flash")
     DEEPSEEK_REASONING_MODEL = os.environ.get("DEEPSEEK_REASONING_MODEL", "deepseek-v4-pro")
+    DEEPSEEK_3066_MENU_ENABLED = os.environ.get("DEEPSEEK_3066_MENU_ENABLED", "0") == "1"
     WORKBENCH_WORKSPACE_BASE = os.environ.get("WORKBENCH_WORKSPACE_BASE", "/data")
+    HAPI_SERVER_HOST = os.environ.get("HAPI_SERVER_HOST", "10.98.103.193")
+    HAPI_PORT_BASE = int(os.environ.get("HAPI_PORT_BASE", "32000"))
+    HAPI_PUBLIC_URL_TEMPLATE = os.environ.get("HAPI_PUBLIC_URL_TEMPLATE", "").strip()
     MAX_CONTENT_LENGTH = 20 * 1024 * 1024
     TEACHER_GROUP = os.environ.get("TEACHER_GROUP", "teacher")
     ASSISTANT_GROUP = os.environ.get("ASSISTANT_GROUP", "assistant")
     TEACHERS = {x.strip() for x in os.environ.get("TEACHERS", "").split(",") if x.strip()}
+    ALLOWED_USERS = {
+        x.strip() for x in os.environ.get("ALLOWED_USERS", "").split(",") if x.strip()
+    }
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     # The current 193 deployment is an internal HTTP site. Set this to 1 only

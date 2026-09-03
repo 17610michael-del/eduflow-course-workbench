@@ -19,8 +19,8 @@ python3 -m venv "$APP_DIR/venv"
 if [[ ! -f "$APP_DIR/.env" ]]; then
   SECRET_VALUE="$($APP_DIR/venv/bin/python -c 'import secrets; print(secrets.token_hex(32))')"
   umask 077
-  printf 'SECRET_KEY=%s\nDATABASE=%s\nUPLOAD_FOLDER=%s\nSERVER_SUBMISSION_ROOT=%s\nTEACHERS=%s\nTEACHER_GROUP=teacher\nASSISTANT_GROUP=assistant\nDEEPSEEK_API_KEY=\nDEEPSEEK_BASE_URL=https://api.deepseek.com\nDEEPSEEK_CHAT_MODEL=deepseek-v4-flash\nDEEPSEEK_REASONING_MODEL=deepseek-v4-pro\nSESSION_COOKIE_SECURE=0\n' \
-    "$SECRET_VALUE" "$DATA_DIR/app.db" "$DATA_DIR/uploads" "$DATA_DIR/server-files" "teacher01" > "$APP_DIR/.env"
+  printf 'SECRET_KEY=%s\nDATABASE=%s\nUPLOAD_FOLDER=%s\nSERVER_SUBMISSION_ROOT=%s\nTEACHERS=%s\nALLOWED_USERS=%s\nTEACHER_GROUP=teacher\nASSISTANT_GROUP=assistant\nDEEPSEEK_API_KEY=\nDEEPSEEK_BASE_URL=https://api.deepseek.com\nDEEPSEEK_CHAT_MODEL=deepseek-v4-flash\nDEEPSEEK_REASONING_MODEL=deepseek-v4-pro\nDEEPSEEK_3066_MENU_ENABLED=0\nHAPI_SERVER_HOST=10.98.103.193\nHAPI_PORT_BASE=32000\nHAPI_PUBLIC_URL_TEMPLATE=\nSESSION_COOKIE_SECURE=0\n' \
+    "$SECRET_VALUE" "$DATA_DIR/app.db" "$DATA_DIR/uploads" "$DATA_DIR/server-files" "teacher01" "teacher01" > "$APP_DIR/.env"
 fi
 
 set -a
