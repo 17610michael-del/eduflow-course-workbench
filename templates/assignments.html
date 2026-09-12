@@ -22,9 +22,9 @@
       <article class="assignment-row">
         <div class="status-icon {{ item.status }}">{{ '○' if item.status == 'open' else '✓' }}</div>
         <div class="assignment-main">
-          <div class="assignment-title-line"><a href="{{ url_for('assignment_detail', assignment_id=item.id) }}">{{ item.title }}</a>{% for label in item.labels_list %}<span class="label">{{ label }}</span>{% endfor %}</div>
+          <div class="assignment-title-line"><a href="{{ url_for('assignment_detail', assignment_id=item.id) }}">{{ item.title }}</a><span class="assignment-kind">{{ '分组大作业' if item.assignment_mode == 'group' else '个人作业' }}</span>{% for label in item.labels_list %}<span class="label">{{ label }}</span>{% endfor %}</div>
           <p>#{{ item.id }} · {{ item.status|capitalize }} · 由 {{ item.creator_name }} 创建于 {{ item.created_at|relative_time }}</p>
-          <div class="assignment-meta"><span>◷ 截止 {{ item.due_date|date_cn }}</span><span>✓ {{ item.submitted_count }}/{{ item.assignee_count }} 已提交</span></div>
+          <div class="assignment-meta"><span>◷ 截止 {{ item.due_date|date_cn }}</span><span>✓ {{ item.submitted_count }}/{{ item.target_count }} {{ '个小组' if item.assignment_mode == 'group' else '位学生' }}已提交</span></div>
         </div>
         <a class="comment-count" href="{{ url_for('assignment_detail', assignment_id=item.id) }}#activity" aria-label="{{ item.comment_count }} 条评论">▱ {{ item.comment_count }}</a>
       </article>

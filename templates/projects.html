@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}项目监控{% endblock %}
+{% block content %}
+<div class="page wide-page project-monitor-page" data-project-monitor>
+  <header class="page-header project-monitor-header">
+    <div>
+      <p class="eyebrow">LOCAL PROJECT MONITOR</p>
+      <h1>项目监控</h1>
+      <p>{{ '查看193服务器上各学生项目的更新、Git状态与运行情况。' if current_user.role in ['teacher','assistant'] else '查看你在193服务器上的项目状态和运行情况。' }}</p>
+    </div>
+    <span class="monitor-safety-badge"><i></i>只读监控</span>
+  </header>
+
+  <section class="monitor-stats" aria-label="项目监控统计">
+    <article><span class="monitor-stat-icon purple">♙</span><div><small>学生账号</small><strong>{{ totals.students }}</strong><em>当前可查看范围</em></div></article>
+    <article><span class="monitor-stat-icon green">●</span><div><small>在线 Agent</small><strong>{{ totals.online }}</strong><em>3 分钟内有上报</em></div></article>
+    <article><span class="monitor-stat-icon blue">◫</span><div><small>本地项目</small><strong>{{ totals.projects }}</strong><em>已识别的一级目录</em></div></article>
+    <article><span class="monitor-stat-icon orange">!</span><div><small>需要关注</small><strong>{{ totals.alerts }}</strong><em>长期未更新或有改动</em></div></article>
+  </section>
+
+  <div class="info-banner monitor-info"><span>ⓘ</span><div><strong>Token Agent 工作方式</strong><p>每个学生的 Agent 只读取自己的工作区；不上传文件正文、环境变量、SSH Key 或完整命令行。原始 Token 只在生成时显示一次。</p></div></div>
+
+  <div class="project-student-list">
+    {% for student in students %}
+    <section class="panel monitored-student {{ 'online' if student.online else ('offline' if student.configured else 'unconfigured') }}">
+      <header class="monitored-student-head">
+        <div class="monitored-identity">
+          <span class="avatar avatar-lg avatar-student">{{ student.display_name[0] }}</span>
+          <span><strong>{{ student.display_name }}</strong><small>@{{ student.username }} · {{ student.workspace_root or '/data/' ~ student.username }}</small></span>
+        </div>
+        <div class="monitor-agent-state">
+          <span class="agent-pill {{ 'online' if student.online else ('offline' if student.configured else 'unconfigured') }}"><i></i>{{ '在线' if student.online else ('离线' if student.configured else '未配置') }}</span>
+          {% if student.configured %}<small>最后上报：{{ student.last_seen_at|relative_time if student.last_seen_at else '尚未上报' }}</small>{% endif %}
+        </div>
+        {% if current_user.role == 'teacher' %}
+        <button class="btn btn-secondary btn-sm" type="button" data-create-agent-token="{{ student.username }}" data-workspace="{{ student.workspace_root or '/data/' ~ student.username }}">{{ '查看 Token' if student.configured else '配置 Agent' }}</button>
+        {% endif %}
+      </header>
+
+      {% if student.projects %}
+      <div class="monitored-project-grid">
+        {% for project in student.projects %}
+        <article class="monitored-project {{ 'needs-attention' if project.stale or project.git.changed_files else '' }}">
+          <header><span class="project-folder">◫</span><div><h2>{{ project.name }}</h2><code>{{ project.path }}</code></div>{% if project.running_processes %}<span class="process-pill">● {{ project.running_processes }} 个进程</span>{% endif %}</header>
+          {% if project.manifest.status %}
+          <div class="project-progress"><div><strong>{{ project.manifest.status }}</strong><span>{{ project.progress }}%</span></div><span><i style="width:{{ project.progress }}%"></i></span></div>
+          {% endif %}
+          <dl class="project-metrics">
+            <div><dt>最后更新</dt><dd class="{{ 'alert-text' if project.stale else '' }}">{{ project.age_days ~ ' 天前' if project.age_days is not none else '未知' }}</dd></div>
+            <div><dt>文件</dt><dd>{{ project.file_count }} 个 · {{ project.total_size|file_size }}{% if project.scan_truncated %}+{% endif %}</dd></div>
+            <div><dt>Git</dt><dd>{{ project.git.branch if project.git.is_repository else '未初始化' }}</dd></div>
+            <div><dt>未提交改动</dt><dd class="{{ 'alert-text' if project.git.changed_files else '' }}">{{ project.git.changed_files or 0 }} 个文件</dd></div>
+          </dl>
+          {% if project.git.commit_message %}<p class="project-last-commit"><span>最近提交</span><strong>{{ project.git.commit_message }}</strong><small>{{ project.git.commit[:8] }}</small></p>{% endif %}
+          {% if project.stale %}<div class="project-alert">超过 14 天没有文件更新</div>{% endif %}
+        </article>
+        {% endfor %}
+      </div>
+      <footer class="monitor-student-footer"><span>主机 {{ student.hostname or '未知' }} · Agent {{ student.agent_version or '等待上报' }}</span><span>磁盘 {{ student.disk.used|file_size }} / {{ student.disk.total|file_size }}（{{ student.disk_percent }}%）</span></footer>
+      {% elif student.has_report %}
+      <div class="monitor-empty"><span>◫</span><strong>Agent 正常，暂无项目</strong><p>监控目录 <code>{{ student.workspace_root or '/data/' ~ student.username }}</code> 中还没有一级项目目录。项目放入后最长 60 秒自动显示。</p></div>
+      {% elif student.configured %}
+      <div class="monitor-empty"><span>◌</span><strong>等待 Agent 上报项目</strong><p>Token 已生成，但暂时没有收到有效报告。请由管理员完成 Agent 安装。</p></div>
+      {% else %}
+      <div class="monitor-empty"><span>⌁</span><strong>尚未配置监控 Agent</strong><p>{{ '点击“配置 Agent”生成一次性显示的 Token。' if current_user.role == 'teacher' else '请联系管理员完成 Agent 配置。' }}</p></div>
+      {% endif %}
+    </section>
+    {% else %}<div class="empty-state large"><strong>暂无可监控的学生账号</strong><span>学生首次登录 EduFlow 后会出现在这里。</span></div>{% endfor %}
+  </div>
+
+  <dialog class="agent-token-dialog" data-agent-token-dialog>
+    <div class="agent-token-head"><span>⌁</span><div><p class="eyebrow">AGENT CREDENTIAL</p><h2>配置项目监控 Agent</h2></div><button type="button" data-close-agent-dialog aria-label="关闭">×</button></div>
+    <div class="agent-token-warning"><strong>Token 由用户名和服务器密钥安全派生</strong><p>同一学生的 Token 保持稳定，不需要手动传给学生。不能仅根据公开用户名推算。</p></div>
+    <label>学生账号<input data-agent-username readonly></label>
+    <label>监控目录<input data-agent-workspace readonly></label>
+    <label>派生 Agent Token（通常无需复制）<div class="copy-field"><input data-agent-token readonly><button type="button" data-copy-agent-token>复制</button></div></label>
+    <div class="agent-setup-command"><strong>由管理员在193服务器执行</strong><code>sudo bash /data/kltst/homework/app/deploy/install-project-monitor-root.sh 学生用户名</code><small>脚本会自动派生并写入 Token，以学生身份完成首次上报，然后启用常驻服务。</small></div>
+    <footer><button class="btn btn-primary" type="button" data-close-agent-dialog>我已保存</button></footer>
+  </dialog>
+</div>
+{% endblock %}

@@ -1,0 +1,19 @@
+[Unit]
+Description=EduFlow Bioinformatics Undergraduate Course
+After=network.target
+
+[Service]
+Type=simple
+User=kltst
+Group=kltst
+WorkingDirectory=/data/kltst/homework/app
+EnvironmentFile=/data/kltst/homework/data-bio-u/.env
+EnvironmentFile=-/etc/eduflow-ai/deepseek.env
+ExecStart=/data/kltst/homework/app/venv/bin/gunicorn --workers 4 --bind 127.0.0.1:8002 --access-logfile - --error-logfile - app:app
+Restart=always
+RestartSec=3
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

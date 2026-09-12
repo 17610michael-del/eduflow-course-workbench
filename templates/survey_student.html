@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ student.display_name }} · 学情问卷{% endblock %}
+{% block content %}
+<div class="page wide-page">
+  <div class="page-header">
+    <div><p class="eyebrow">SURVEY DETAIL</p><h1>{{ student.display_name }} 的学情问卷</h1><p>@{{ student.username }}{% if response %} · 提交于 {{ response.submitted_at|date_cn }}{% else %} · 尚未提交{% endif %}</p></div>
+    <span class="header-actions">
+      {% if response %}<form method="post" action="{{ url_for('survey_student_regenerate', username=student.username) }}"><button class="btn btn-secondary" type="submit">重新生成分析</button></form>{% endif %}
+      <a class="btn btn-secondary" href="{{ url_for('survey_overview_page') }}">返回总览</a>
+    </span>
+  </div>
+
+  {% if not response %}
+  <div class="empty-page panel"><strong>⌁</strong><h1>尚未提交问卷</h1><p>该学生还没有填写学情问卷。</p></div>
+  {% else %}
+  <h2 style="margin:18px 0 12px">AI 学情分析报告</h2>
+  {% if analysis %}
+  <div class="analysis-cards">
+    <section class="panel"><h2>总体画像</h2><p>{{ analysis.get('summary', '') }}</p></section>
+    <section class="panel"><h2>强项</h2><ul class="analysis-list">{% for item in analysis.get('strengths', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>弱项</h2><ul class="analysis-list">{% for item in analysis.get('weaknesses', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>分阶段学习路径</h2><ul class="analysis-list">{% for item in analysis.get('study_plan', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>先修补课清单</h2><ul class="analysis-list">{% for item in analysis.get('prerequisites', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>Linux/编程实操建议</h2><ul class="analysis-list">{% for item in analysis.get('practice_advice', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>AI 工具使用建议</h2><ul class="analysis-list">{% for item in analysis.get('ai_tool_advice', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+  </div>
+  {% else %}
+  <div class="empty-page panel"><strong>⌁</strong><h1>分析尚未生成</h1><p>该生已提交答卷，但分析尚未生成。可点击右上角“重新生成分析”。</p></div>
+  {% endif %}
+
+  <h2 style="margin:22px 0 12px">答题详情</h2>
+  {% for section in sections %}
+  <section class="panel survey-section">
+    <header><h2>{{ section.title }}</h2></header>
+    <div class="survey-section-body">
+      {% for question in section.questions %}
+      <div class="survey-question">
+        <h3><span class="survey-type">{{ {'single':'单选','multiple':'多选','fill':'填空','essay':'简答'}[question.type] }}</span>{{ question.prompt }}</h3>
+        <div class="survey-answer">{% set value = answers.get(question.id) %}{% if question.type == 'multiple' %}{{ value|join('、') }}{% else %}{{ value or '未作答' }}{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}学情问卷总览{% endblock %}
+{% block content %}
+<div class="page wide-page">
+  <div class="page-header">
+    <div><p class="eyebrow">SURVEY OVERVIEW</p><h1>学情问卷总览</h1><p>查看本课程学生的问卷提交情况与选项分布。</p></div>
+  </div>
+
+  <section class="survey-cta panel">
+    <div><strong>提交进度</strong><small>已交 {{ submitted }} / {{ total }} · 未交 {{ unsubmitted }} 人</small></div>
+    <span class="exam-overview-progress" style="width:min(300px,35%)"><strong>{{ ((submitted / total * 100)|round|int) if total else 0 }}%</strong><span><i style="width:{{ ((submitted / total * 100)|round|int) if total else 0 }}%"></i></span><small>完成比例</small></span>
+  </section>
+
+  <section class="panel table-panel">
+    <div class="table-toolbar"><strong>学生提交情况</strong></div>
+    <div class="table-scroll">
+      <table class="survey-table">
+        <thead><tr><th>学生</th><th>用户名</th><th>状态</th><th>AI 分析</th><th>提交时间</th><th>操作</th></tr></thead>
+        <tbody>
+          {% for student in students %}
+          <tr>
+            <td>{{ student.display_name }}</td>
+            <td>@{{ student.username }}</td>
+            <td>{% if student.submitted %}<span class="level-badge level-high">已提交</span>{% else %}<span class="level-badge level-mid">未提交</span>{% endif %}</td>
+            <td>{% if student.has_analysis %}<span class="level-badge level-high">已生成</span>{% elif student.submitted %}<span class="level-badge level-mid">未生成</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td>{{ student.submitted_at|date_cn if student.submitted_at else '—' }}</td>
+            <td><a class="btn btn-secondary btn-sm" href="{{ url_for('survey_student_page', username=student.username) }}">查看答卷与分析</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="muted">本课程暂无学生。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <h2 style="margin:22px 0 12px">选项分布</h2>
+  {% for item in dist_items %}
+  <section class="panel survey-section">
+    <header><h2><span class="survey-type">{{ {'single':'单选','multiple':'多选'}[item.question.type] }}</span>{{ item.question.prompt }}</h2></header>
+    <div class="survey-section-body">
+      <div class="survey-distribution">
+        {% for option in item.question.options %}
+        <div class="bar-row"><span>{{ option }}</span><span class="survey-bar"><i style="width:{{ ((item.counts.get(option,0) / item.responses * 100)|round|int) if item.responses else 0 }}%"></i></span><em>{{ item.counts.get(option,0) }}</em></div>
+        {% endfor %}
+        <small class="muted">共 {{ item.responses }} 人作答本题</small>
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

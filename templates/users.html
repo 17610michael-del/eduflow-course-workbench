@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}用户信息{% endblock %}
+{% block content %}
+<div class="page wide-page user-directory-page">
+  <div class="page-header user-directory-header">
+    <div>
+      <p class="eyebrow">COURSE MEMBERS</p>
+      <h1>用户信息</h1>
+      <p>查看参与课程的老师、助教与学生账号。学生的学习明细仍在“学生信息”页面管理。</p>
+    </div>
+    <span class="directory-count">{{ users|length }} 名参与用户</span>
+  </div>
+
+  <section class="user-role-overview" aria-label="用户角色统计">
+    <button class="user-role-card teacher active" type="button" data-user-role-filter="teacher">
+      <span class="user-role-icon">师</span>
+      <span><small>TEACHERS</small><strong>老师</strong><em>负责课程、任务与考试管理</em></span>
+      <b>{{ counts.teacher }}</b>
+    </button>
+    <button class="user-role-card assistant active" type="button" data-user-role-filter="assistant">
+      <span class="user-role-icon">助</span>
+      <span><small>ASSISTANTS</small><strong>助教</strong><em>协助审阅、评分与课程答疑</em></span>
+      <b>{{ counts.assistant }}</b>
+    </button>
+    <button class="user-role-card student active" type="button" data-user-role-filter="student">
+      <span class="user-role-icon">学</span>
+      <span><small>STUDENTS</small><strong>学生</strong><em>参与任务、考试与学习小组</em></span>
+      <b>{{ counts.student }}</b>
+    </button>
+  </section>
+
+  <section class="panel user-directory-panel">
+    <div class="table-toolbar user-directory-toolbar">
+      <label class="search-field compact"><span>⌕</span><input placeholder="搜索真实姓名、用户名或小组..." data-user-search aria-label="搜索全部用户"></label>
+      <div class="user-role-tabs" role="group" aria-label="按角色筛选">
+        <button class="active" type="button" data-user-filter="all">全部 <b>{{ users|length }}</b></button>
+        <button type="button" data-user-filter="teacher">老师 <b>{{ counts.teacher }}</b></button>
+        <button type="button" data-user-filter="assistant">助教 <b>{{ counts.assistant }}</b></button>
+        <button type="button" data-user-filter="student">学生 <b>{{ counts.student }}</b></button>
+      </div>
+    </div>
+
+    <div class="user-role-sections">
+      {% for group in grouped_users %}
+      <section class="user-role-section" data-user-role-section="{{ group.role }}">
+        <header>
+          <span class="avatar avatar-{{ group.role }}">{{ group.label[0] }}</span>
+          <div><h2>{{ group.label }}</h2><p>{{ group.description }}</p></div>
+          <strong>{{ group.members|length }} 人</strong>
+        </header>
+        <div class="user-card-grid">
+          {% for user in group.members %}
+          <article class="user-directory-card" data-user-row="{{ user.role }} {{ user.username }} {{ user.display_name }} {{ user.group_name or '' }}">
+            <div class="user-card-identity">
+              <span class="avatar avatar-lg avatar-{{ user.role }}">{{ user.display_name[0] }}</span>
+              <span><strong>{% if current_user.role in ('teacher', 'assistant') or current_user.id == user.id or user.role in ('teacher', 'assistant') %}<a href="{{ url_for('user_profile_page', username=user.username) }}">{{ user.display_name }}</a>{% else %}{{ user.display_name }}{% endif %}{% if user.is_group_leader %}<em class="leader-badge">组长</em>{% endif %}{% if current_user.id == user.id %}<em class="current-user-badge">当前账号</em>{% endif %}</strong><small>@{{ user.username }}</small></span>
+              <em class="user-role-badge {{ user.role }}">{{ {'teacher':'老师','assistant':'助教','student':'学生'}[user.role] }}</em>
+            </div>
+            <dl class="user-card-details">
+              <div><dt>所属组织</dt><dd>{{ user.group_name if user.role == 'student' and user.group_name else ('未分组' if user.role == 'student' else '课程教学团队') }}</dd></div>
+              <div><dt>课程活动</dt><dd>{{ user.activity_summary }}</dd></div>
+              <div><dt>首次建档</dt><dd>{{ user.created_at|date_cn }}</dd></div>
+              <div><dt>最近登录</dt><dd>{% if user.last_login_at %}{{ user.last_login_at|relative_time }}{% else %}<span class="muted">尚未登录</span>{% endif %}</dd></div>
+            </dl>
+          </article>
+          {% else %}<div class="empty-state">暂无{{ group.label }}账号登录系统。</div>{% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+      <div class="empty-state large user-directory-empty" data-user-empty hidden><strong>没有匹配的用户</strong><span>请更换搜索词或角色筛选条件。</span></div>
+    </div>
+  </section>
+</div>
+{% endblock %}

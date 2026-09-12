@@ -2,14 +2,236 @@
 {% block title %}用户设置{% endblock %}
 {% block content %}
 <div class="page narrow-page">
-  <div class="page-header"><div><p class="eyebrow">ACCOUNT SETTINGS</p><h1>用户设置</h1><p>维护用于课程页面展示的真实姓名。</p></div></div>
+  <div class="page-header"><div><p class="eyebrow">ACCOUNT SETTINGS</p><h1>用户设置</h1><p>维护用于课程页面展示与联系的个人资料。</p></div></div>
   <div class="settings-grid">
-    <section class="panel profile-summary"><span class="avatar avatar-lg avatar-{{ current_user.role }}">{{ profile.display_name[0] }}</span><h2>{{ profile.display_name }}</h2><p>@{{ profile.username }}</p><span class="role-pill">{{ '老师' if profile.role == 'teacher' else '学生' }}</span>{% if profile.group_name %}<div class="profile-group"><small>所在小组</small><strong>{{ profile.group_name }}{% if profile.is_group_leader %} · 组长{% endif %}</strong></div>{% endif %}</section>
-    <form class="panel form-panel profile-form" method="post">
-      <h2>基本资料</h2><p>学生信息、学情分析和小组页面均使用这里填写的真实姓名。</p>
-      <div class="form-group"><label for="display-name">真实姓名 <em>*</em></label><input id="display-name" name="display_name" required minlength="2" maxlength="50" value="{{ profile.display_name }}" placeholder="请输入真实姓名"><small>Linux 用户名 @{{ profile.username }} 不会改变。</small></div>
-      <div class="form-actions"><button class="btn btn-primary" type="submit">保存真实姓名</button></div>
+    <section class="panel profile-summary"><span class="avatar avatar-lg avatar-{{ current_user.role }}">{{ profile.display_name[0] }}</span><h2>{{ profile.display_name }}</h2><p>@{{ profile.username }}</p><span class="role-pill">{{ {'teacher':'老师','assistant':'助教','student':'学生'}[profile.role] }}</span>{% if profile.group_name %}<div class="profile-group"><small>所在小组</small><strong>{{ profile.group_name }}{% if profile.is_group_leader %} · 组长{% endif %}</strong></div>{% endif %}</section>
+    <form class="panel form-panel profile-form" method="post" id="profile-form">
+      {% set display_value = '' if profile.display_name == profile.username else profile.display_name %}
+      <h2>基本资料</h2><p>课程页面展示与师生联系均使用这里填写的个人资料。</p>
+      <div class="form-group">
+        <label for="display-name">真实姓名 <em>*</em></label>
+        <div class="profile-static" data-view>{{ display_value or '未填写' }}</div>
+        <input id="display-name" name="display_name" required minlength="2" maxlength="50" value="{{ display_value }}" placeholder="请输入真实姓名" data-edit hidden>
+        <small>Linux 用户名 @{{ profile.username }} 不会改变。</small>
+      </div>
+      <div class="form-group">
+        <label for="profile-email">邮箱 <em>*</em></label>
+        <div class="profile-static" data-view>{{ profile.email or '未填写' }}</div>
+        <input id="profile-email" name="email" type="email" required maxlength="254" pattern="[^@\s.]+(?:\.[^@\s.]+)*@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+" title="邮箱格式不正确，请填写有效邮箱，例如 name@example.com 或 name@bua.edu.cn。" value="{{ profile.email or '' }}" placeholder="请输入邮箱" data-edit hidden>
+        <small>用于课程展示与联系，例如 name@example.com 或 name@bua.edu.cn。</small>
+      </div>
+      {% if profile.role == 'student' %}
+      <div class="form-group">
+        <label for="student-id">学号 <em>*</em></label>
+        <div class="profile-static" data-view>{{ profile.student_id or '未填写' }}</div>
+        <input id="student-id" name="student_id" required pattern="\d{12}" minlength="12" maxlength="12" inputmode="numeric" value="{{ profile.student_id or '' }}" placeholder="请输入 12 位数字学号" data-edit hidden>
+        <small>学号必填，须为 12 位数字，用于问卷与个人资料的核对。</small>
+      </div>
+      <div class="form-group">
+        <label for="profile-major">专业 <em>*</em></label>
+        <div class="profile-static" data-view>{{ profile.major|major_display or '未填写' }}</div>
+        <select id="profile-major" name="major" required data-edit hidden>
+          <option value="">请选择专业</option>
+          {% for group in major_groups %}
+          <optgroup label="{{ group.label }}">
+            {% for option in group.options %}
+            <option value="{{ option.value }}"{% if option.value == profile.major %} selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select>
+        <small>从北京农学院 2026 招生专业中选择，本科/硕士分组；已有旧文本必须重新选择。</small>
+      </div>
+      <div class="form-group">
+        <label for="profile-advisor">导师</label>
+        <div class="profile-static" data-view>{{ profile.advisor or '未填写' }}</div>
+        <input id="profile-advisor" name="advisor" maxlength="50" value="{{ profile.advisor or '' }}" placeholder="选填：导师姓名/课题组" data-edit hidden>
+      </div>
+      {% else %}
+      <div class="form-group">
+        <label for="profile-wechat">微信 <em>*</em></label>
+        <div class="profile-static" data-view>{{ profile.wechat or '未填写' }}</div>
+        <input id="profile-wechat" name="wechat" required minlength="6" maxlength="20" value="{{ profile.wechat or '' }}" placeholder="请输入微信号" data-edit hidden>
+        <small>以字母开头，6 到 20 位字母、数字、下划线或连字符。</small>
+      </div>
+      <div class="form-group">
+        <label id="office-schedule-label">答疑安排 <em>*</em></label>
+        <div class="profile-static schedule-static" data-view>
+          {% if schedule_rows %}
+          <ul class="schedule-list">
+            {% for slot in schedule_rows %}
+            <li class="schedule-item">
+              <span class="schedule-weekday">{{ slot.weekday_label }}</span>
+              <span class="schedule-time">{{ slot.start }}{% if slot.start and slot.end %}–{% endif %}{{ slot.end }}</span>
+              <span class="schedule-location">{{ slot.location }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+          {% elif profile.office_hours %}
+          <span class="schedule-legacy">旧答疑安排：{{ profile.office_hours }}</span>
+          {% else %}未填写{% endif %}
+        </div>
+        <div class="schedule-editor" id="office-schedule-editor" data-edit hidden>
+          <script type="application/json" id="office-schedule-initial">{{ schedule_rows|tojson }}</script>
+          <div class="schedule-rows" id="office-schedule-rows"></div>
+          <button type="button" class="btn btn-secondary schedule-add" id="office-schedule-add">添加一组</button>
+          <small>需填写 1 到 10 组；同一星期的时间不能重复或重叠，地点 1 到 50 字。</small>
+        </div>
+      </div>
+      {% endif %}
+      <div class="form-actions" id="profile-actions">
+        <button class="btn btn-primary" type="button" id="profile-edit-btn">修改</button>
+      </div>
     </form>
   </div>
 </div>
+<script>
+(function () {
+  var form = document.getElementById('profile-form');
+  if (!form) return;
+  var actions = document.getElementById('profile-actions');
+  var editables = Array.prototype.slice.call(form.querySelectorAll('[data-edit]'));
+  var views = Array.prototype.slice.call(form.querySelectorAll('[data-view]'));
+  var original = {};
+  editables.forEach(function (el) { if (el.name) { original[el.name] = el.value; } });
+
+  var scheduleEditor = document.getElementById('office-schedule-editor');
+  var scheduleRowsEl = document.getElementById('office-schedule-rows');
+  var scheduleAdd = document.getElementById('office-schedule-add');
+  var scheduleInitial = [];
+  var initialScript = document.getElementById('office-schedule-initial');
+  if (initialScript) {
+    try {
+      var parsed = JSON.parse(initialScript.textContent || '[]');
+      if (Array.isArray(parsed)) { scheduleInitial = parsed; }
+    } catch (e) { scheduleInitial = []; }
+  }
+  var WEEKDAYS = [['1', '周一'], ['2', '周二'], ['3', '周三'], ['4', '周四'], ['5', '周五'], ['6', '周六'], ['7', '周日']];
+
+  function makeRow(slot) {
+    slot = slot || {};
+    var row = document.createElement('div');
+    row.className = 'schedule-row';
+
+    var weekday = document.createElement('select');
+    weekday.className = 'schedule-weekday';
+    weekday.name = 'sched_weekday';
+    WEEKDAYS.forEach(function (pair) {
+      var option = document.createElement('option');
+      option.value = pair[0];
+      option.textContent = pair[1];
+      weekday.appendChild(option);
+    });
+    weekday.value = String(slot.weekday == null ? '1' : slot.weekday);
+
+    var start = document.createElement('input');
+    start.className = 'schedule-time';
+    start.type = 'time';
+    start.name = 'sched_start';
+    start.value = slot.start || '';
+
+    var end = document.createElement('input');
+    end.className = 'schedule-time';
+    end.type = 'time';
+    end.name = 'sched_end';
+    end.value = slot.end || '';
+
+    var location = document.createElement('input');
+    location.className = 'schedule-location';
+    location.type = 'text';
+    location.name = 'sched_location';
+    location.maxLength = 50;
+    location.placeholder = '地点（1-50 字）';
+    location.value = slot.location || '';
+
+    var remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-secondary schedule-remove';
+    remove.textContent = '删除';
+    remove.addEventListener('click', function () {
+      if (scheduleRowsEl.children.length <= 1) { return; }
+      row.remove();
+      updateRemoveState();
+    });
+
+    row.appendChild(weekday);
+    row.appendChild(start);
+    row.appendChild(end);
+    row.appendChild(location);
+    row.appendChild(remove);
+    return row;
+  }
+
+  function updateRemoveState() {
+    if (!scheduleRowsEl) return;
+    var rows = scheduleRowsEl.children;
+    var single = rows.length <= 1;
+    Array.prototype.forEach.call(rows, function (row) {
+      var remove = row.querySelector('.schedule-remove');
+      if (remove) { remove.disabled = single; }
+    });
+    if (scheduleAdd) { scheduleAdd.disabled = rows.length >= 10; }
+  }
+
+  function renderSchedule(slots) {
+    if (!scheduleRowsEl) return;
+    scheduleRowsEl.innerHTML = '';
+    var list = (Array.isArray(slots) && slots.length) ? slots : [{ weekday: '1' }];
+    list.forEach(function (slot) { scheduleRowsEl.appendChild(makeRow(slot)); });
+    updateRemoveState();
+  }
+
+  function restoreSchedule() {
+    if (!scheduleEditor) return;
+    var copy = scheduleInitial.map(function (slot) {
+      return { weekday: slot.weekday, start: slot.start, end: slot.end, location: slot.location };
+    });
+    renderSchedule(copy);
+  }
+
+  if (scheduleAdd) {
+    scheduleAdd.addEventListener('click', function () {
+      if (!scheduleRowsEl || scheduleRowsEl.children.length >= 10) { return; }
+      scheduleRowsEl.appendChild(makeRow({ weekday: '1' }));
+      updateRemoveState();
+    });
+  }
+  if (scheduleEditor) { renderSchedule(scheduleInitial); }
+
+  function setEditable(editable) {
+    editables.forEach(function (el) { el.hidden = !editable; });
+    views.forEach(function (view) { view.hidden = editable; });
+    actions.innerHTML = '';
+    if (editable) {
+      var save = document.createElement('button');
+      save.className = 'btn btn-primary';
+      save.type = 'submit';
+      save.textContent = '保存修改';
+      var cancel = document.createElement('button');
+      cancel.className = 'btn btn-secondary';
+      cancel.type = 'button';
+      cancel.textContent = '取消';
+      cancel.addEventListener('click', function () {
+        editables.forEach(function (el) { if (el.name) { el.value = original[el.name]; } });
+        restoreSchedule();
+        setEditable(false);
+      });
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+    } else {
+      var edit = document.createElement('button');
+      edit.className = 'btn btn-primary';
+      edit.type = 'button';
+      edit.textContent = '修改';
+      edit.addEventListener('click', function () {
+        restoreSchedule();
+        setEditable(true);
+      });
+      actions.appendChild(edit);
+    }
+  }
+
+  setEditable(false);
+})();
+</script>
 {% endblock %}

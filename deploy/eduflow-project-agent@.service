@@ -1,0 +1,23 @@
+[Unit]
+Description=EduFlow Project Monitor Agent for %i
+After=network.target homework.service
+Wants=homework.service
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/python3 /data/kltst/project/monitor/project_agent.py --server http://127.0.0.1:8000 --token-file /home/%i/.config/eduflow-monitor/token --workspace /data/%i --interval 60
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/data/%i
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

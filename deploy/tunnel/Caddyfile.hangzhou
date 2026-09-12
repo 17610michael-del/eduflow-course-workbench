@@ -1,0 +1,48 @@
+eduflow.47.96.100.122.nip.io {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+	reverse_proxy 127.0.0.1:18080 {
+		header_up Host 10.98.103.193
+		header_down Set-Cookie "(.*)" "$1; Secure"
+	}
+}
+
+hapi-kltst.47.96.100.122.nip.io {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+	reverse_proxy 127.0.0.1:32001
+}
+
+hapi-wsst.47.96.100.122.nip.io {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+	reverse_proxy 127.0.0.1:32010
+}
+
+graph.47.96.100.122.nip.io {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+	@graph_files path / /index.html /chapters.html /lab.html /graph.html /search.html /chapter/* /entity/* /static/* /data/*
+	handle @graph_files {
+		reverse_proxy 127.0.0.1:38080
+	}
+	handle {
+		respond 404
+	}
+}

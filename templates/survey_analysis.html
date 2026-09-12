@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}我的问卷分析{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="page-header">
+    <div><p class="eyebrow">SURVEY ANALYSIS</p><h1>我的问卷分析</h1><p>基于你的学情问卷答卷，由 DeepSeek 生成个性化学习画像。</p></div>
+    <a class="btn btn-secondary" href="{{ url_for('survey_page') }}">查看我的答卷</a>
+  </div>
+  {% if analysis %}
+  <div class="analysis-cards">
+    <section class="panel"><h2>总体画像</h2><p>{{ analysis.get('summary', '') }}</p></section>
+    <section class="panel"><h2>你的强项</h2><ul class="analysis-list">{% for item in analysis.get('strengths', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>需要加强的方面</h2><ul class="analysis-list">{% for item in analysis.get('weaknesses', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>分阶段学习路径</h2><ul class="analysis-list">{% for item in analysis.get('study_plan', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>建议先修补的基础</h2><ul class="analysis-list">{% for item in analysis.get('prerequisites', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>Linux / 编程实操建议</h2><ul class="analysis-list">{% for item in analysis.get('practice_advice', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+    <section class="panel"><h2>AI 工具使用建议</h2><ul class="analysis-list">{% for item in analysis.get('ai_tool_advice', []) %}<li>{{ item }}</li>{% else %}<li class="muted">暂无</li>{% endfor %}</ul></section>
+  </div>
+  {% else %}
+  <div class="empty-page panel"><strong>⌁</strong><h1>分析尚未生成</h1><p>你的答卷已保存，但学情分析暂时没有生成。请稍后重新打开本页面，系统会自动重试。</p></div>
+  {% endif %}
+</div>
+{% endblock %}

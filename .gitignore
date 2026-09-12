@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.py[cod]
 .venv/
 venv/
@@ -16,3 +16,8 @@ uploads/*
 测试账号.md
 193.md
 AGENTS.md
+193_codex.md
+tmp/
+hapi-source/
+OpenChamber_OpenCode_Mac迁移交接.md
+EduFlow项目总结_AI协同与Mac_Windows部署指南_20260827.docx

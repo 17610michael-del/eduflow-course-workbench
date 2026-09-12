@@ -21,6 +21,15 @@
       <kbd>/</kbd>
     </form>
     <div class="top-actions">
+      {% if available_courses|length > 1 %}
+      <form class="course-switcher" action="{{ url_for('switch_course') }}" method="post">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <label class="sr-only" for="course-switch">当前课程</label>
+        <select id="course-switch" name="course" onchange="this.form.submit()">
+          {% for course in available_courses %}<option value="{{ course.slug }}" {% if course.id == current_course.id %}selected{% endif %}>{{ course.name }}</option>{% endfor %}
+        </select>
+      </form>
+      {% endif %}
       {% if current_user.role == 'teacher' %}<a class="icon-button" href="{{ url_for('assignment_new') }}" title="新建任务" aria-label="新建任务">＋</a>{% endif %}
       <a class="icon-button notification" href="{{ url_for('home') }}#attention" title="通知" aria-label="通知">♢<span></span></a>
       <details class="user-menu">
@@ -42,18 +51,25 @@
     <div class="workspace-label">YOUR WORKSPACE</div>
     <nav>
       <a href="{{ url_for('home') }}" class="{% if request.endpoint == 'home' %}active{% endif %}"><span>⌂</span> Home</a>
+      <a href="{{ url_for('ai_chat_page') }}" class="{% if request.endpoint == 'ai_chat_page' %}active{% endif %}"><span>✦</span> DeepSeek 对话</a>
+      {% if config.get('DEEPSEEK_3066_MENU_ENABLED', False) %}<a href="http://10.98.103.193:3066/" target="_blank" rel="noopener noreferrer"><span>✦</span> DeepSeek 项目工作台</a>{% endif %}
+      <a href="{{ url_for('hapi_launch') }}" title="HAPI 是用户级工作区，不随课程切换"><span>✧</span> HAPI</a>
+      <a href="{{ url_for('knowledge_page') }}" class="{% if request.endpoint and request.endpoint.startswith('knowledge_') %}active{% endif %}"><span>▧</span> {{ '我的知识库' if current_user.role == 'student' else 'AI 知识库' }}</a>
+      <a href="https://graph.47.96.100.122.nip.io/" target="_blank" rel="noopener noreferrer"><span>◈</span> 知识图谱</a>
       <a href="{{ url_for('assignments_page') }}" class="{% if request.endpoint in ['assignments_page', 'assignment_detail', 'assignment_new'] %}active{% endif %}"><span>▣</span> 所有任务 <em>{{ nav_assignment_count }}</em></a>
       {% if current_user.role == 'teacher' %}<a href="{{ url_for('assignment_drafts_page') }}" class="{% if request.endpoint == 'assignment_drafts_page' %}active{% endif %}"><span>▧</span> 任务草稿箱 <em>{{ nav_draft_count }}</em></a>{% endif %}
+      <a href="{{ url_for('users_page') }}" class="{% if request.endpoint == 'users_page' %}active{% endif %}"><span>♧</span> 用户信息</a>
       <a href="{{ url_for('students_page') }}" class="{% if request.endpoint == 'students_page' %}active{% endif %}"><span>♙</span> 学生信息</a>
-      <a href="{{ url_for('analytics_page') }}" class="{% if request.endpoint == 'analytics_page' %}active{% endif %}"><span>⌁</span> 学情分析</a>
+      <a href="{{ url_for('projects_page') }}" class="{% if request.endpoint == 'projects_page' %}active{% endif %}"><span>◫</span> 项目监控 <em>{{ nav_project_count }}</em></a>
+      <a href="{{ url_for('analytics_page') }}" class="{% if request.endpoint in ['analytics_page','survey_page','survey_analysis_page','survey_overview_page','survey_student_page'] %}active{% endif %}"><span>⌁</span> 学情分析{% if survey_pending %}<i class="nav-dot" aria-label="有待填写的学情问卷"></i>{% endif %}</a>
       <a href="{{ url_for('exams_page') }}" class="{% if request.endpoint in ['exams_page','submit_exam','exam_submissions_page'] %}active{% endif %}"><span>▤</span> 考试 <em>{{ nav_exam_count }}</em></a>
       {% if current_user.role == 'teacher' %}<a href="{{ url_for('question_bank_page') }}" class="{% if request.endpoint == 'question_bank_page' %}active{% endif %}"><span>▦</span> 题库</a>{% endif %}
       <a href="{{ url_for('groups_page') }}" class="{% if request.endpoint == 'groups_page' %}active{% endif %}"><span>♟</span> 学习小组</a>
       <a href="{{ url_for('audit_log_page') }}" class="{% if request.endpoint == 'audit_log_page' %}active{% endif %}"><span>≡</span> 提交与删除记录</a>
     </nav>
     <div class="sidebar-bottom">
-      <div class="course-badge">CS</div>
-      <div><strong>课程工作台</strong><small>193 内网服务器</small></div>
+      <div class="course-badge">{{ current_course.badge }}</div>
+      <div><strong>{{ current_course.name }}</strong><small>{{ current_course.subtitle }}{% if current_course.term %} · {{ current_course.term }}{% endif %}</small></div>
     </div>
   </aside>
 
@@ -67,5 +83,50 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+
+  {% if profile_force %}
+  <div class="profile-modal" id="profile-force-modal" role="dialog" aria-modal="true" aria-labelledby="profile-force-title">
+    <div class="profile-modal-card">
+      <h2 id="profile-force-title">完善个人信息</h2>
+      <p>问卷答卷已保存，请先完善个人信息：真实姓名、邮箱用于课程展示与联系；学生还需填写学号与学院专业；老师/助教还需填写微信与答疑安排（1 到 10 组，含星期、时间、地点）。</p>
+      <div class="profile-modal-actions">
+        <a class="btn btn-primary" href="{{ url_for('user_settings') }}">前往填写</a>
+      </div>
+    </div>
+  </div>
+  {% elif profile_prompt %}
+  <div class="profile-modal" id="profile-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="profile-prompt-title">
+    <div class="profile-modal-card">
+      <h2 id="profile-prompt-title">完善个人信息</h2>
+      <p>请完善个人信息：真实姓名、邮箱用于课程展示与联系；学生还需填写学号与学院专业；老师/助教还需填写微信与答疑安排（1 到 10 组，含星期、时间、地点）。</p>
+      <div class="profile-modal-actions">
+        <a class="btn btn-primary" href="{{ url_for('user_settings') }}">前往填写</a>
+        <button class="btn btn-secondary" type="button" id="profile-prompt-dismiss">取消</button>
+      </div>
+    </div>
+  </div>
+  <script>
+  (function () {
+    // “取消”只写在 sessionStorage：当前标签页内不再弹；
+    // 关闭全部作业系统页面后重新打开（哪怕自动登录）会再次提醒。
+    var KEY = 'eduflowProfilePromptDismissed';
+    var modal = document.getElementById('profile-prompt-modal');
+    if (!modal) return;
+    try {
+      if (window.sessionStorage.getItem(KEY) === '1') {
+        modal.remove();
+        return;
+      }
+    } catch (e) {}
+    var dismiss = document.getElementById('profile-prompt-dismiss');
+    if (dismiss) {
+      dismiss.addEventListener('click', function () {
+        try { window.sessionStorage.setItem(KEY, '1'); } catch (e) {}
+        modal.remove();
+      });
+    }
+  })();
+  </script>
+  {% endif %}
 </body>
 </html>

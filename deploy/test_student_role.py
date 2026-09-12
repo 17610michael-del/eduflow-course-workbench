@@ -1,5 +1,20 @@
-"""Read-mostly production permission smoke test for the student role."""
-from app import app, get_db, query, role_for_linux_user
+"""Isolated permission smoke test for the student role."""
+import os
+import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
+
+temporary = tempfile.TemporaryDirectory(prefix="eduflow-student-role-")
+os.environ["SECRET_KEY"] = "student-role-test-secret"
+os.environ["DATABASE"] = os.path.join(temporary.name, "test.db")
+os.environ["UPLOAD_FOLDER"] = os.path.join(temporary.name, "uploads")
+os.environ["SERVER_SUBMISSION_ROOT"] = os.path.join(temporary.name, "server-files")
+os.environ["ALLOWED_USERS"] = "demo_teacher,demo_student"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app import app, init_db, query, role_for_linux_user  # noqa: E402
 
 
 def check(label, condition, detail=""):
@@ -9,6 +24,7 @@ def check(label, condition, detail=""):
 
 
 with app.app_context():
+    init_db()
     check("linux role classification", role_for_linux_user("example_student") == "student", "example_student -> student")
     student = query("SELECT * FROM users WHERE username='demo_student'", one=True)
     check("seeded student available", student is not None, "demo_student")
@@ -30,12 +46,15 @@ with app.test_client() as client:
     check("interaction filter works", client.get("/assignments?view=interactions").status_code == 200, "HTTP 200")
     check("read assignments API", client.get("/api/assignments").status_code == 200, "HTTP 200")
     check("view assignment detail", client.get("/assignments/1").status_code == 200, "HTTP 200")
+    users_html = client.get("/users").get_data(as_text=True)
+    check("view complete user directory", "用户信息" in users_html and "老师" in users_html and "学生" in users_html, "all-role directory visible")
     check("view shared student directory", client.get("/students").status_code == 200, "HTTP 200")
     check("read shared student API", client.get("/api/students").status_code == 200, "HTTP 200")
     check("cannot create assignment", client.post("/api/assignments", json={"title": "x", "description": "x"}).status_code == 403, "HTTP 403")
     analytics_page = client.get("/analytics")
     check("can view own analytics", analytics_page.status_code == 200, "HTTP 200")
-    own_report = client.post("/api/analyze", json={"username": "teacher01"})
+    with patch("app.enhance_learning_analysis", return_value={"summary": "测试", "weak_topics": [], "suggestion": ""}):
+        own_report = client.post("/api/analyze", json={"username": "teacher01"})
     check("analytics forced to self", own_report.status_code == 200 and own_report.json["username"] == "demo_student", "requested teacher but received own report")
     check("cannot close assignment", client.post("/assignments/1/close").status_code == 302, "redirected with teacher-only warning")
     detail_html = client.get("/assignments/1").get_data(as_text=True)
@@ -44,3 +63,4 @@ with app.test_client() as client:
     check("submission endpoint accepts student role", submission.status_code == 400 and submission.json["error"] == "file_required", "student passed role check; file required")
 
 print("STUDENT_ROLE_TEST_OK")
+temporary.cleanup()

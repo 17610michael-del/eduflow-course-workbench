@@ -1,0 +1,35 @@
+[Unit]
+Description=EduFlow reverse SSH tunnel to Hangzhou gateway
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=kltst
+Group=kltst
+Environment=HOME=/home/kltst
+UMask=0077
+ExecStartPre=/usr/bin/test -r /home/kltst/.ssh/id_ed25519_eduflow_hz
+ExecStartPre=/usr/bin/test -r /home/kltst/.ssh/known_hosts_eduflow_hz
+ExecStart=/usr/bin/ssh -NT -i /home/kltst/.ssh/id_ed25519_eduflow_hz -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/kltst/.ssh/known_hosts_eduflow_hz -R 127.0.0.1:18080:127.0.0.1:80 -R 127.0.0.1:32001:127.0.0.1:32001 -R 127.0.0.1:32010:127.0.0.1:32010 -R 127.0.0.1:38080:10.98.103.199:8080 eduflow-tunnel@47.96.100.122
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
