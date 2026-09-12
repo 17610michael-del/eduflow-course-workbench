@@ -240,7 +240,8 @@ if ! getent passwd wsst >/dev/null; then
   useradd --create-home --uid "$WSST_UID" --gid "$WSST_GID" --shell /bin/bash wsst
 fi
 usermod --append --groups teacher wsst
-usermod --append --groups teacher kltst
+usermod --append --groups assistant kltst
+gpasswd --delete kltst teacher >/dev/null 2>&1 || true
 passwd --lock wsst >/dev/null
 install -d -m 0750 -o wsst -g wsst /data/wsst
 [[ "$(id -u wsst)" == "$WSST_UID" && "$(id -g wsst)" == "$WSST_GID" ]] \
@@ -256,7 +257,16 @@ import sys
 path = pathlib.Path(sys.argv[1])
 updates = {
     "ALLOWED_USERS": "kltst,wsst",
-    "TEACHERS": "kltst,wsst",
+    "TEACHERS": "wsst",
+    "ASSISTANTS": "kltst",
+    "DEGREE_USERS": "kltst",
+    "BIOINFORMATICS_USERS": "",
+    "BIOINFORMATICS_ASSISTANTS": "kltst",
+    "COURSE_ONLY_SLUG": "degree",
+    "SESSION_COOKIE_NAME": "eduflow_degree_session",
+    "REMEMBER_COOKIE_NAME": "eduflow_degree_remember",
+    "LOGIN_HINT_COOKIE_PREFIX": "degree_",
+    "SEED_DEMO_DATA": "0",
     "DEEPSEEK_3066_MENU_ENABLED": "0",
     "HAPI_PORT_BASE": "32000",
     "HAPI_PUBLIC_URL_TEMPLATE": "https://hapi-{username}.47.96.100.122.nip.io/",

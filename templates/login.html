@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>登录 · EduFlow</title>
+  <title>登录 · {{ config.COURSE_NAME }} · EduFlow</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head>
@@ -15,7 +15,7 @@
     </section>
     <section class="login-card">
       <div class="login-card-inner">
-        <span class="login-icon">↪</span><h2>登录课程工作台</h2><p>使用课程服务器的 Linux 账号和密码登录</p>
+        <span class="login-icon">↪</span><h2>登录{{ config.COURSE_NAME }}</h2><p>使用课程服务器的 Linux 账号和密码登录</p>
         {% with messages = get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="login-alert {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
         <form method="post" autocomplete="on">
           <label class="username-field" for="login-username">服务器用户名

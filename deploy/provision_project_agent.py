@@ -56,7 +56,7 @@ def write_token(username: str, token: str) -> Path:
     return token_file
 
 
-def register_agent(database: Path, username: str, token_hash: str, workspace: str) -> None:
+def register_agent(database: Path, username: str, token_hash: str, workspace: str, course_slug: str) -> None:
     """Write SQLite as its owning service account, never as root."""
     database_owner = database.stat()
     original_uid, original_gid = os.geteuid(), os.getegid()
@@ -67,12 +67,15 @@ def register_agent(database: Path, username: str, token_hash: str, workspace: st
         connection = sqlite3.connect(database)
         connection.execute("PRAGMA foreign_keys=ON")
         user = connection.execute(
-            "SELECT id,role FROM users WHERE username=?", (username,)
+            """SELECT u.id,cm.role,c.id FROM users u
+               JOIN course_memberships cm ON cm.user_id=u.id
+               JOIN courses c ON c.id=cm.course_id
+               WHERE u.username=? AND c.slug=?""", (username, course_slug)
         ).fetchone()
         if not user or user[1] != "student":
             raise ValueError(f"EduFlow 中不存在学生账号：{username}")
         existing = connection.execute(
-            "SELECT id FROM project_agents WHERE user_id=?", (user[0],)
+            "SELECT id FROM project_agents WHERE course_id=? AND user_id=?", (user[2], user[0])
         ).fetchone()
         if existing:
             connection.execute(
@@ -82,9 +85,9 @@ def register_agent(database: Path, username: str, token_hash: str, workspace: st
         else:
             connection.execute(
                 """INSERT INTO project_agents
-                   (user_id,token_hash,workspace_root,enabled,created_at)
-                   VALUES (?,?,?,1,?)""",
-                (user[0], token_hash, workspace, datetime.now(timezone.utc).isoformat()),
+                   (course_id,user_id,token_hash,workspace_root,enabled,created_at)
+                   VALUES (?,?,?,?,1,?)""",
+                (user[2], user[0], token_hash, workspace, datetime.now(timezone.utc).isoformat()),
             )
         connection.commit()
     finally:
@@ -97,6 +100,11 @@ def register_agent(database: Path, username: str, token_hash: str, workspace: st
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("username")
+    parser.add_argument(
+        "--course",
+        default="degree",
+        choices=("degree", "bioinformatics", "bio_undergrad"),
+    )
     parser.add_argument("--env-file", type=Path, default=APP_DIR / ".env")
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -111,10 +119,10 @@ def main() -> int:
     if not database.is_absolute():
         database = APP_DIR / database
 
-    token, token_hash = issue_agent_token(args.username, secret)
+    token, token_hash = issue_agent_token(args.username, secret, scope=args.course)
     workspace = f"/data/{args.username}"
     try:
-        register_agent(database, args.username, token_hash, workspace)
+        register_agent(database, args.username, token_hash, workspace, args.course)
     except ValueError as exc:
         parser.error(str(exc))
     try:

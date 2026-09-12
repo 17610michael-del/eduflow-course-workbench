@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}学情问卷{% endblock %}
+{% block content %}
+<div class="page wide-page">
+  <div class="page-header">
+    <div><p class="eyebrow">LEARNING SURVEY</p><h1>学情问卷</h1><p>帮助老师了解你的知识基础与实践能力，仅用于教学设计与研究，不计入成绩。第 29、30 题为选填。</p></div>
+  </div>
+
+  {% if not editable %}
+  <div class="survey-cta panel">
+    <div><strong>✓ 你已提交问卷</strong><small>提交于 {{ response.submitted_at|date_cn }}，可随时重新填写覆盖。</small></div>
+    <span class="header-actions">
+      <a class="btn btn-primary" href="{{ url_for('survey_analysis_page') }}">查看我的问卷分析</a>
+      <a class="btn btn-secondary" href="{{ url_for('survey_page', edit='1') }}">重新填写</a>
+    </span>
+  </div>
+  {% endif %}
+
+  {% if editable %}
+  <form method="post" class="survey-form" id="survey-form">
+    {% for section in sections %}
+    <section class="panel survey-section">
+      <header><h2>{{ section.title }}</h2></header>
+      <div class="survey-section-body">
+        {% for question in section.questions %}
+        <div class="survey-question" data-qid="{{ question.id }}" data-qlabel="{{ question.label }}" data-qtype="{{ question.type }}">
+          <h3><span class="survey-type">{{ {'single':'单选','multiple':'多选','fill':'填空','essay':'简答'}[question.type] }}</span>{% if question.type == 'essay' %}<span class="survey-badge survey-optional">选填</span>{% else %}<span class="survey-badge survey-required">必答</span>{% endif %}{{ question.prompt }}</h3>
+          {% if question.type == 'single' %}
+          <div class="survey-options {% if question.options|length <= 4 %}inline{% endif %}">
+            {% for option in question.options %}
+            <label><input type="radio" name="answer_{{ question.id }}" value="{{ option }}" {% if existing_answers.get(question.id) == option %}checked{% endif %}><span>{{ option }}</span></label>
+            {% endfor %}
+          </div>
+          {% elif question.type == 'multiple' %}
+          <div class="survey-options">
+            {% for option in question.options %}
+            <label><input type="checkbox" name="answer_{{ question.id }}" value="{{ option }}" {% if option in (existing_answers.get(question.id) or []) %}checked{% endif %}><span>{{ option }}</span></label>
+            {% endfor %}
+          </div>
+          {% elif question.type == 'fill' %}
+          <input class="survey-text-input" type="text" name="answer_{{ question.id }}" value="{{ existing_answers.get(question.id, '') }}" placeholder="请填写你的回答">
+          {% else %}
+          <textarea class="survey-textarea" name="answer_{{ question.id }}" rows="4" placeholder="请填写你的回答">{{ existing_answers.get(question.id, '') }}</textarea>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+    <div class="survey-actions"><button class="btn btn-primary" type="submit">提交问卷</button></div>
+  </form>
+  <script>
+  (function () {
+    var form = document.getElementById('survey-form');
+    if (!form) return;
+
+    function isMissing(question) {
+      var qid = question.getAttribute('data-qid');
+      var type = question.getAttribute('data-qtype');
+      if (type === 'essay') return false;
+      if (type === 'single') {
+        return !question.querySelector('input[name="answer_' + qid + '"]:checked');
+      }
+      if (type === 'multiple') {
+        return question.querySelectorAll('input[name="answer_' + qid + '"]:checked').length === 0;
+      }
+      if (type === 'fill') {
+        var input = question.querySelector('input[name="answer_' + qid + '"]');
+        return !input || !input.value.trim();
+      }
+      return false;
+    }
+
+    function missingQuestions() {
+      var nodes = form.querySelectorAll('.survey-question');
+      var missing = [];
+      for (var i = 0; i < nodes.length; i++) {
+        if (isMissing(nodes[i])) missing.push(nodes[i]);
+      }
+      return missing;
+    }
+
+    function showToast(message) {
+      var stack = document.querySelector('.flash-stack');
+      if (!stack) {
+        stack = document.createElement('div');
+        stack.className = 'flash-stack';
+        var main = document.querySelector('.main-content');
+        (main || document.body).insertBefore(stack, (main || document.body).firstChild);
+      }
+      var toast = document.createElement('div');
+      toast.className = 'flash flash-danger survey-toast';
+      toast.setAttribute('role', 'alert');
+      toast.innerHTML = message + '<button type="button" aria-label="关闭">×</button>';
+      stack.appendChild(toast);
+      var closeBtn = toast.querySelector('button');
+      closeBtn.addEventListener('click', function () { toast.remove(); });
+      setTimeout(function () { if (toast.parentNode) toast.remove(); }, 6000);
+    }
+
+    function flashOverlay() {
+      var overlay = document.createElement('div');
+      overlay.className = 'survey-flash-overlay';
+      document.body.appendChild(overlay);
+      setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 1700);
+    }
+
+    function clearFlash(question) {
+      question.classList.remove('survey-missing-flash');
+    }
+
+    form.addEventListener('change', function (e) {
+      var question = e.target.closest ? e.target.closest('.survey-question') : null;
+      if (question && !isMissing(question)) clearFlash(question);
+    });
+    form.addEventListener('input', function (e) {
+      var question = e.target.closest ? e.target.closest('.survey-question') : null;
+      if (question && !isMissing(question)) clearFlash(question);
+    });
+
+    form.addEventListener('submit', function (e) {
+      var missing = missingQuestions();
+      if (missing.length === 0) return;
+      e.preventDefault();
+      var labels = missing.map(function (q) { return q.getAttribute('data-qlabel'); });
+      showToast('还有 ' + missing.length + ' 道必答题未作答：' + labels.join('、'));
+      missing[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      missing.forEach(function (q) { q.classList.add('survey-missing-flash'); });
+      flashOverlay();
+    });
+  })();
+  </script>
+  {% else %}
+  {% for section in sections %}
+  <section class="panel survey-section">
+    <header><h2>{{ section.title }}</h2></header>
+    <div class="survey-section-body">
+      {% for question in section.questions %}
+      <div class="survey-question">
+        <h3><span class="survey-type">{{ {'single':'单选','multiple':'多选','fill':'填空','essay':'简答'}[question.type] }}</span>{{ question.prompt }}</h3>
+        <div class="survey-answer">{% set value = existing_answers.get(question.id) %}{% if question.type == 'multiple' %}{{ value|join('、') }}{% else %}{{ value or '未作答' }}{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

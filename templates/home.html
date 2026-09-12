@@ -4,7 +4,7 @@
 <div class="page page-home">
   <div class="welcome-row">
     <div>
-      <p class="eyebrow">2026 秋季学期</p>
+      <p class="eyebrow">{{ current_course.term or '当前学期' }}</p>
       <h1>你好，{{ current_user.name }} <span>👋</span></h1>
       <p>这里是今天的课程任务与互动概览。</p>
     </div>

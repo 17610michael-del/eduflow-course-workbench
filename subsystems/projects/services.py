@@ -13,14 +13,15 @@ MAX_PROCESSES = 100
 MAX_REPORT_BYTES = 512 * 1024
 
 
-def issue_agent_token(username: str, secret: str) -> tuple[str, str]:
+def issue_agent_token(username: str, secret: str, *, scope: str = "degree") -> tuple[str, str]:
     """Derive a stable, unguessable per-user token from a server-side secret."""
     normalized_username = str(username or "").strip()
     if not normalized_username or not secret:
         raise ValueError("username_and_secret_required")
+    token_subject = normalized_username if scope == "degree" else f"{scope}:{normalized_username}"
     digest = hmac.new(
         str(secret).encode("utf-8"),
-        f"eduflow-project-agent:{normalized_username}".encode("utf-8"),
+        f"eduflow-project-agent:{token_subject}".encode("utf-8"),
         hashlib.sha256,
     ).digest()
     encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")

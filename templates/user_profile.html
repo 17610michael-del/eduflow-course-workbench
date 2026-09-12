@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ profile.display_name }} · 个人资料{% endblock %}
+{% block content %}
+<div class="page narrow-page">
+  <div class="page-header"><div><p class="eyebrow">USER PROFILE</p><h1>个人资料</h1><p>查看课程成员的联系信息与身份信息。</p></div></div>
+  <section class="panel profile-summary">
+    <span class="avatar avatar-lg avatar-{{ profile.role }}">{{ profile.display_name[0] }}</span>
+    <h2>{{ profile.display_name }}</h2>
+    <p>@{{ profile.username }}</p>
+    <span class="role-pill">{{ {'teacher':'老师','assistant':'助教','student':'学生'}[profile.role] }}</span>
+  </section>
+  <section class="panel form-panel">
+    <h2>资料详情</h2>
+    <dl class="profile-fields">
+      {% if profile.role == 'student' %}
+      <div class="profile-field"><dt>学号</dt><dd>{{ profile.student_id or '未填写' }}</dd></div>
+      <div class="profile-field"><dt>邮箱</dt><dd>{{ profile.email or '未填写' }}</dd></div>
+      <div class="profile-field"><dt>专业</dt><dd>{{ profile.major|major_display or '未填写' }}</dd></div>
+      <div class="profile-field"><dt>导师</dt><dd>{{ profile.advisor or '未填写' }}</dd></div>
+      {% else %}
+      {% set schedule_rows = profile.office_schedule|office_schedule_rows %}
+      <div class="profile-field"><dt>邮箱</dt><dd>{{ profile.email or '未填写' }}</dd></div>
+      <div class="profile-field"><dt>微信</dt><dd>{{ profile.wechat or '未填写' }}</dd></div>
+      <div class="profile-field"><dt>答疑安排</dt><dd>{% if schedule_rows %}<ul class="schedule-list">{% for slot in schedule_rows %}<li class="schedule-item"><span class="schedule-weekday">{{ slot.weekday_label }}</span><span class="schedule-time">{{ slot.start }}–{{ slot.end }}</span><span class="schedule-location">{{ slot.location }}</span></li>{% endfor %}</ul>{% elif profile.office_hours %}<span class="schedule-legacy">旧答疑安排：{{ profile.office_hours }}</span>{% else %}未填写{% endif %}</dd></div>
+      {% endif %}
+    </dl>
+  </section>
+  <div class="form-actions">
+    <a class="btn btn-secondary" href="{{ url_for('users_page') }}">返回用户信息</a>
+  </div>
+</div>
+{% endblock %}

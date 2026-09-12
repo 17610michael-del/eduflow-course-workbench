@@ -3,6 +3,11 @@
 {% block content %}
 <div class="page analytics-page">
   <div class="page-header"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>{{ '学情分析' if current_user.role in ['teacher','assistant'] else '我的学情' }}</h1><p>结合任务互动与提交记录，由 DeepSeek 生成学习参与情况报告。</p></div><span class="mock-badge"><i></i> DEEPSEEK API</span></div>
+  {% if current_user.role == 'student' %}
+  <div class="survey-cta panel"><div><strong>学情问卷</strong><small>{{ '你尚未填写本课程的学情问卷，填写后可由 AI 生成个性化学习画像。' if not survey_summary.has_response else '你已提交学情问卷，可查看 AI 生成的学习画像。' }}</small></div><a class="btn btn-primary" href="{{ url_for('survey_page') if not survey_summary.has_response else url_for('survey_analysis_page') }}">{{ '去学情问卷作答' if not survey_summary.has_response else '查看我的问卷分析' }}</a></div>
+  {% else %}
+  <div class="survey-cta panel"><div><strong>学情问卷</strong><small>已交 {{ survey_summary.submitted }}/{{ survey_summary.total }} · 未交 {{ survey_summary.total - survey_summary.submitted }} 人</small></div><a class="btn btn-secondary" href="{{ url_for('survey_overview_page') }}">查看全部</a></div>
+  {% endif %}
   <div class="analytics-grid">
     <section class="panel analytics-control">
       <div class="panel-heading"><div><h2>{{ '选择分析对象' if current_user.role in ['teacher','assistant'] else '我的账号' }}</h2></div></div>

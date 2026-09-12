@@ -193,6 +193,50 @@ def enhance_learning_analysis(config, report):
     return result
 
 
+def survey_learning_analysis(config, answers_text):
+    """根据学情问卷答卷生成个性化学习分析，返回固定键的 JSON dict。
+
+    要求模型只输出一个 JSON 对象，键为：summary、strengths、weaknesses、
+    study_plan、prerequisites、practice_advice、ai_tool_advice。解析时剥离
+    ```json 围栏；失败抛 DeepSeekError。
+    """
+    prompt = (
+        "你是课程学情分析助手。根据以下学生的入学学情问卷答卷，生成个性化学习分析。"
+        "必须只输出一个 JSON 对象，不要输出任何解释、前后缀文字或 Markdown 代码块。"
+        "JSON 键如下："
+        "summary（字符串，两三句话的总体学习画像）、"
+        "strengths（字符串数组，学生的强项）、"
+        "weaknesses（字符串数组，学生的弱项或不足）、"
+        "study_plan（字符串数组，分阶段学习路径）、"
+        "prerequisites（字符串数组，建议先修补的基础课程或知识）、"
+        "practice_advice（字符串数组，Linux/编程实操建议）、"
+        "ai_tool_advice（字符串数组，AI 工具使用建议）。"
+        "所有列表项使用简洁中文，只依据答卷内容，不要编造答卷中没有的信息。\n\n"
+        "问卷答卷如下：\n" + answers_text
+    )
+    raw = deepseek_chat(
+        config,
+        [{"role": "system", "content": "你是课程学情分析助手，必须只输出有效 JSON。"},
+         {"role": "user", "content": prompt}],
+        model=config.get("DEEPSEEK_REASONING_MODEL"), json_mode=False, max_tokens=6000,
+    )
+    text = raw.strip()
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            text = text[first_newline + 1:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+        text = text.strip()
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise DeepSeekError("DeepSeek 学情问卷分析未返回有效 JSON，请重试") from exc
+    if not isinstance(result, dict):
+        raise DeepSeekError("DeepSeek 学情问卷分析结构无效")
+    return result
+
+
 def extract_document_text(path):
     path = Path(path)
     suffix = path.suffix.lower()
